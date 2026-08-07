@@ -6,14 +6,17 @@ requires-python = ">=3.11"
 dependencies = [
     "numpy>=1.26",
     "av>=13",
-    "scenedetect>=0.6.4",
-    "opencv-python-headless>=4.9",
+    # 0.7부터 opencv-python(GUI판)이 하드 의존으로 바뀜 — headless extra가 있는 0.6.x 고정.
+    # pip 최종 사용자에게도 headless만 설치되게 하는 유일한 선언적 방법 (결정 A10)
+    "scenedetect[opencv-headless]>=0.6.4,<0.7",
     "imagehash>=4.3",
     "scikit-image>=0.24",
     "Pillow>=10",
-    # STT 백엔드 — 플랫폼별 자동 선택 (1순위 macOS Apple Silicon = MLX/Metal)
+    # STT 백엔드 — 플랫폼별 자동 선택 (1순위 macOS Apple Silicon = MLX/Metal).
+    # faster-whisper는 휠이 실존하는 조합에만 강제: Intel Mac(onnxruntime x86_64 휠 중단)과
+    # Windows ARM64(ctranslate2 휠 부재)는 설치 실패 대신 doctor(exit 4) 안내로 처리
     "mlx-whisper>=0.4; sys_platform == 'darwin' and platform_machine == 'arm64'",
-    "faster-whisper>=1.0; sys_platform != 'darwin' or platform_machine != 'arm64'",
+    "faster-whisper>=1.0; sys_platform == 'linux' or (sys_platform == 'win32' and platform_machine != 'ARM64')",
 ]
 
 [project.optional-dependencies]

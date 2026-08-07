@@ -20,7 +20,7 @@ def load_points(path: Path, duration: float) -> list[dict]:
     if not path.exists():
         raise CliError(EXIT_INPUT, "points-not-found", f"points 파일이 없습니다: {path}")
     try:
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
         raise CliError(EXIT_INPUT, "points-invalid-json", f"points 파일이 JSON이 아닙니다: {e}")
 
@@ -51,6 +51,11 @@ def load_points(path: Path, duration: float) -> list[dict]:
         points.append({"time": float(t), "reason": reason.strip()})
 
     if problems:
-        raise CliError(EXIT_INPUT, "points-schema", "points 항목 검증 실패", details=problems)
+        # 봉투 비대 방지 — 위반이 대량이어도 stdout 계약(작은 봉투 1건)을 지킨다
+        shown = problems[:20]
+        if len(problems) > 20:
+            shown.append(f"... 외 {len(problems) - 20}건")
+        raise CliError(EXIT_INPUT, "points-schema",
+                       f"points 항목 검증 실패 ({len(problems)}건)", details=shown)
 
     return sorted(points, key=lambda p: p["time"])

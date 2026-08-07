@@ -30,15 +30,17 @@ def get_fps(path: Path) -> float:
         return float(rate)
 
 
-def decode_gray_frames(path: Path, w: int = 64, h: int = 36) -> Iterator[np.ndarray]:
-    """저해상도 그레이 프레임을 스트리밍으로 낸다(float32). 전량 적재 금지 —
-    검출기는 앵커·직전 프레임만 유지하면 되므로 메모리가 영상 길이와 무관해진다."""
+def decode_gray_frames(path: Path, w: int = 64, h: int = 36) -> Iterator[tuple[float | None, np.ndarray]]:
+    """저해상도 그레이 프레임을 (PTS초, float32 배열) 스트리밍으로 낸다. 전량 적재 금지 —
+    검출기는 앵커·직전 프레임만 유지하면 되므로 메모리가 영상 길이와 무관해진다.
+    PTS를 함께 내는 이유: 인덱스/평균fps 근사는 VFR·start_time≠0 입력에서
+    추출 시각(seek는 PTS 기반)과 어긋나 엉뚱한 프레임을 캡처하게 된다."""
     with av.open(str(path)) as c:
         stream = c.streams.video[0]
         stream.thread_type = "AUTO"
         for frame in c.decode(stream):
             g = frame.reformat(width=w, height=h, format="gray", interpolation="BICUBIC")
-            yield g.to_ndarray().astype(np.float32)
+            yield frame.time, g.to_ndarray().astype(np.float32)
 
 
 def _frame_at(container: av.container.InputContainer, time_s: float) -> av.VideoFrame | None:

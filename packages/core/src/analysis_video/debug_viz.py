@@ -1,8 +1,8 @@
 """디버그 그래프 — frames 스테이지가 남긴 산출물만 읽어서 그린다.
 
-분석을 재계산하지 않는다(프로토타입 debug_viz의 자체 루프 중복 리팩터):
-detect_anchor.npz(시계열 캐시) + frames.json(판정 레코드) + transcript.json을
-그대로 시각화하므로 "그래프에 보이는 것 = 실제 파이프라인 산출"이 구조적으로 보장된다.
+분석을 재계산하지 않는다: detect_anchor.npz(시계열 캐시) + frames.json(판정 레코드)
++ transcript.json을 그대로 시각화하므로 "그래프에 보이는 것 = 실제 파이프라인
+산출"이 구조적으로 보장된다. x축은 저장된 PTS(time_series)를 사용한다.
 matplotlib은 [viz] extra — 지연 임포트하고 없으면 EXIT_DEPS로 안내한다.
 """
 import json
@@ -11,9 +11,16 @@ from pathlib import Path
 
 import numpy as np
 
-from .errors import EXIT_DEPS, CliError
+from .errors import EXIT_DEPS, CliError, log
 
 STATUS_COLOR = {"accepted": "green", "rejected": "gray"}
+
+# 플랫폼별 한글 폰트 후보 — 설치 확인 후 선택 (없는 폰트를 지정하면 전부 tofu)
+_FONT_CANDIDATES = {
+    "darwin": ["AppleGothic", "Apple SD Gothic Neo"],
+    "win32": ["Malgun Gothic"],
+}
+_FONT_FALLBACK = ["Noto Sans CJK KR", "NanumGothic", "NanumBarunGothic", "UnDotum"]
 
 
 def _load_matplotlib():
@@ -24,14 +31,20 @@ def _load_matplotlib():
                        "matplotlib이 설치되어 있지 않습니다 (debug-report는 [viz] extra)",
                        hint="uv tool install 'analysis-video[viz]' 또는 pip install 'analysis-video[viz]'")
     matplotlib.use("Agg")
-    font = {"darwin": "AppleGothic", "win32": "Malgun Gothic"}.get(sys.platform, "NanumGothic")
-    matplotlib.rcParams["font.family"] = font
+    from matplotlib import font_manager
+    installed = {f.name for f in font_manager.fontManager.ttflist}
+    for name in _FONT_CANDIDATES.get(sys.platform, []) + _FONT_FALLBACK:
+        if name in installed:
+            matplotlib.rcParams["font.family"] = name
+            break
+    else:
+        log("[debug-report] 경고: 한글 폰트를 찾지 못했습니다 — 라벨이 깨질 수 있습니다")
     matplotlib.rcParams["axes.unicode_minus"] = False
     return matplotlib
 
 
 def render(out_dir: Path, title: str) -> Path:
-    matplotlib = _load_matplotlib()
+    _load_matplotlib()
     import matplotlib.pyplot as plt
 
     data = np.load(out_dir / "detect_anchor.npz")
@@ -40,14 +53,14 @@ def render(out_dir: Path, title: str) -> Path:
     cum_threshold = float(data["cum_threshold"])
     rate_threshold = float(data["rate_threshold"])
 
-    frames_info = json.loads((out_dir / "frames.json").read_text())
-    transcript = json.loads((out_dir / "transcript.json").read_text())
+    frames_info = json.loads((out_dir / "frames.json").read_text(encoding="utf-8"))
+    transcript = json.loads((out_dir / "transcript.json").read_text(encoding="utf-8"))
     records = frames_info["records"]
     events = frames_info["anchor_events"]
 
     n = len(cum)
-    times = np.arange(n) / fps
-    duration = n / fps
+    times = data["time_series"] if "time_series" in data else np.arange(n) / fps
+    duration = float(times[-1]) if n else 0.0
 
     width = max(12, duration / 20)
     fig, (ax_v, ax_r, ax_a) = plt.subplots(
@@ -61,12 +74,14 @@ def render(out_dir: Path, title: str) -> Path:
     ax_v.axhline(cum_threshold, color="red", ls="--", lw=1, label=f"cum_threshold={cum_threshold}")
 
     for e in events:
-        ax_v.axvspan(e["transition_start_idx"] / fps, e["trigger_idx"] / fps,
-                     color="orange", alpha=0.15)
-        ax_v.plot(e["anchor_idx"] / fps, 0, marker="v", color="blue", ms=7, zorder=5)
+        start = e.get("transition_start_time", e["transition_start_idx"] / fps)
+        end = e.get("trigger_time", e["trigger_idx"] / fps)
+        ax_v.axvspan(start, end, color="orange", alpha=0.15)
+        ax_v.plot(e.get("anchor_time", e["anchor_idx"] / fps), 0,
+                  marker="v", color="blue", ms=7, zorder=5)
 
     for i, r in enumerate(records):
-        idx = min(int(r["time"] * fps), n - 1)
+        idx = min(int(np.searchsorted(times, r["time"])), n - 1)
         color = STATUS_COLOR[r["status"]]
         marker = "*" if "importance-point" in r["sources"] else "^"
         ms = 11 if marker == "*" else 8

@@ -2,13 +2,22 @@
 
 state.json이 있어야 ① 타임아웃으로 잘린 실행을 같은 명령 재실행만으로 이어가고
 ② 직렬 흐름(frames는 transcribe 이후)을 코드로 강제할 수 있다.
+모든 JSON 쓰기는 임시 파일 + os.replace 원자 교체 — kill 타이밍에 반쯤 쓰인
+state/metadata가 남아 파이프라인이 영구 wedge되는 것을 방지한다.
 """
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 
 from . import METADATA_SCHEMA, STATE_SCHEMA
 from .errors import EXIT_INPUT, EXIT_ORDER, CliError
+
+
+def write_json_atomic(path: Path, obj: dict | list) -> None:
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(tmp, path)
 
 
 def state_path(out_dir: Path) -> Path:
@@ -19,12 +28,12 @@ def load_state(out_dir: Path) -> dict:
     p = state_path(out_dir)
     if not p.exists():
         return {"schema": STATE_SCHEMA, "stages": {}}
-    return json.loads(p.read_text())
+    return json.loads(p.read_text(encoding="utf-8"))
 
 
 def save_state(out_dir: Path, state: dict) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
-    state_path(out_dir).write_text(json.dumps(state, ensure_ascii=False, indent=2))
+    write_json_atomic(state_path(out_dir), state)
 
 
 def check_source(state: dict, video_path: Path) -> None:
@@ -61,6 +70,10 @@ def mark_done(state: dict, stage: str, outputs: dict) -> None:
     }
 
 
+def invalidate_stage(state: dict, stage: str) -> None:
+    state["stages"].pop(stage, None)
+
+
 def build_metadata(video_path: Path, transcript: dict, build: dict) -> dict:
     accepted = [r for r in build["records"] if r["status"] == "accepted"]
     rejected = [r for r in build["records"] if r["status"] == "rejected"]
@@ -76,11 +89,24 @@ def build_metadata(video_path: Path, transcript: dict, build: dict) -> dict:
         }
         if r.get("reasons"):
             f["reasons"] = r["reasons"]
+        if r.get("point_times"):
+            f["point_times"] = [round(t, 2) for t in r["point_times"]]
         if r.get("trigger_dialogue"):
             f["trigger_dialogue"] = r["trigger_dialogue"]
         f["yavg"] = r.get("yavg")
         f["hash"] = r.get("hash")
         frames.append(f)
+
+    rejected_out = []
+    for r in rejected:
+        entry: dict = {"time": round(r["time"], 2), "sources": r["sources"],
+                       "reject_reason": r["reject_reason"], "image": r.get("image")}
+        # 탈락해도 importance-point의 근거는 metadata에 남긴다 — 계약(보존 약속) 이행
+        if r.get("reasons"):
+            entry["reasons"] = r["reasons"]
+        if r.get("point_times"):
+            entry["point_times"] = [round(t, 2) for t in r["point_times"]]
+        rejected_out.append(entry)
 
     return {
         "schema": METADATA_SCHEMA,
@@ -90,11 +116,7 @@ def build_metadata(video_path: Path, transcript: dict, build: dict) -> dict:
             "fps": build["fps"],
         },
         "frames": frames,
-        "rejected": [
-            {"time": round(r["time"], 2), "sources": r["sources"],
-             "reject_reason": r["reject_reason"], "image": r.get("image")}
-            for r in rejected
-        ],
+        "rejected": rejected_out,
         "transcript": {
             "backend": transcript["backend"],
             "model": transcript["model"],
@@ -112,9 +134,8 @@ def load_metadata(out_dir: Path) -> dict:
         raise CliError(EXIT_ORDER, "metadata-missing",
                        "metadata.json이 없습니다 — frames 스테이지를 먼저 실행하세요",
                        hint="analysis-video frames <video> --points points.json")
-    return json.loads(p.read_text())
+    return json.loads(p.read_text(encoding="utf-8"))
 
 
 def save_metadata(out_dir: Path, metadata: dict) -> None:
-    (out_dir / "metadata.json").write_text(
-        json.dumps(metadata, ensure_ascii=False, indent=2))
+    write_json_atomic(out_dir / "metadata.json", metadata)

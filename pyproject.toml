@@ -3,8 +3,8 @@ members = ["packages/*"]
 
 [tool.uv]
 override-dependencies = [
-    # 결정 A10: GUI용 opencv 차단 — scenedetect의 하드 의존을 headless로 단일화
-    "opencv-python; sys_platform == 'never'",
-    # 결정 A10: torch 배제 — mlx-whisper가 의존 선언하지만 전사 런타임에서 미사용
+    # 결정 A10: torch 배제 — mlx-whisper 0.4.x가 의존 선언하지만 전사 런타임에서 미사용.
+    # 주의: 이 override는 uv workspace 안에서만 유효 — pip 최종 사용자는 torch가 설치됨
+    # (업스트림 이슈, packages/core/README 한계 참조)
     "torch; sys_platform == 'never'",
 ]
