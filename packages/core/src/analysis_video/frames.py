@@ -15,10 +15,16 @@ import json
 from pathlib import Path
 
 import numpy as np
+from PIL import Image
+from skimage.metrics import structural_similarity as ssim
 
 from . import media
 from .detect import adaptive, anchor
 from .errors import log
+
+
+def _gray_for_compare(img_path: Path, w: int = 400, h: int = 225) -> np.ndarray:
+    return np.asarray(Image.open(img_path).convert("L").resize((w, h)))
 
 
 def _cached_anchor(video_path: Path, out_dir: Path,
@@ -70,6 +76,7 @@ def _cached_adaptive(video_path: Path, out_dir: Path, duration: float) -> list[d
 def build_frames(video_path: Path, out_dir: Path, points: list[dict], *,
                  cum_threshold: float = 0.02, rate_threshold: float = 0.0015,
                  yavg_floor: float = 5.0, phash_dup_distance: int = 4,
+                 ssim_dup_threshold: float = 0.9,
                  near_distance: float = 2.0) -> dict:
     frames_dir = out_dir / "frames"
     rejected_dir = frames_dir / "rejected"
@@ -134,7 +141,15 @@ def build_frames(video_path: Path, out_dir: Path, points: list[dict], *,
             records.append(c)
             return
         h = media.phash(img)
-        dup = next((a for a in accepted if h - a["_hash"] <= phash_dup_distance), None)
+        # 2단 중복 게이트: pHash는 저주파 구조만 봐서 "같은 레이아웃, 다른 내용"
+        # (필기 추가·어두운 애니메이션)을 중복으로 오판한다 — 실측 29건 중 8건 오병합.
+        # pHash를 싼 사전 필터로만 쓰고 SSIM(≥ssim_dup_threshold)으로 확증한다.
+        dup = next(
+            (a for a in accepted
+             if h - a["_hash"] <= phash_dup_distance
+             and ssim(_gray_for_compare(img),
+                      _gray_for_compare(out_dir / a["image"])) >= ssim_dup_threshold),
+            None)
         if dup is not None:
             dst = rejected_dir / img.name
             img.rename(dst)
@@ -186,6 +201,7 @@ def build_frames(video_path: Path, out_dir: Path, points: list[dict], *,
         "params": {
             "cum_threshold": cum_threshold, "rate_threshold": rate_threshold,
             "yavg_floor": yavg_floor, "phash_dup_distance": phash_dup_distance,
+            "ssim_dup_threshold": ssim_dup_threshold,
             "near_distance": near_distance,
         },
     }
