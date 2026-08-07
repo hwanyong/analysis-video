@@ -1,0 +1,10 @@
+numpy
+scenedetect
+imagehash
+scikit-image
+opencv-python-headless
+Pillow
+librosa
+soundfile
+mlx-whisper
+matplotlib

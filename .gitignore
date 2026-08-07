@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+.DS_Store
+testdata/
+debug_out/
+*.analysis/
+.claude/settings.local.json
