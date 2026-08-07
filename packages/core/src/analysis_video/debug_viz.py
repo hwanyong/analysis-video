@@ -1,0 +1,114 @@
+"""디버그 그래프 — frames 스테이지가 남긴 산출물만 읽어서 그린다.
+
+분석을 재계산하지 않는다(프로토타입 debug_viz의 자체 루프 중복 리팩터):
+detect_anchor.npz(시계열 캐시) + frames.json(판정 레코드) + transcript.json을
+그대로 시각화하므로 "그래프에 보이는 것 = 실제 파이프라인 산출"이 구조적으로 보장된다.
+matplotlib은 [viz] extra — 지연 임포트하고 없으면 EXIT_DEPS로 안내한다.
+"""
+import json
+import sys
+from pathlib import Path
+
+import numpy as np
+
+from .errors import EXIT_DEPS, CliError
+
+STATUS_COLOR = {"accepted": "green", "rejected": "gray"}
+
+
+def _load_matplotlib():
+    try:
+        import matplotlib
+    except ImportError:
+        raise CliError(EXIT_DEPS, "viz-missing",
+                       "matplotlib이 설치되어 있지 않습니다 (debug-report는 [viz] extra)",
+                       hint="uv tool install 'analysis-video[viz]' 또는 pip install 'analysis-video[viz]'")
+    matplotlib.use("Agg")
+    font = {"darwin": "AppleGothic", "win32": "Malgun Gothic"}.get(sys.platform, "NanumGothic")
+    matplotlib.rcParams["font.family"] = font
+    matplotlib.rcParams["axes.unicode_minus"] = False
+    return matplotlib
+
+
+def render(out_dir: Path, title: str) -> Path:
+    matplotlib = _load_matplotlib()
+    import matplotlib.pyplot as plt
+
+    data = np.load(out_dir / "detect_anchor.npz")
+    cum, rate = data["cum_series"], data["rate_series"]
+    fps = float(data["fps"])
+    cum_threshold = float(data["cum_threshold"])
+    rate_threshold = float(data["rate_threshold"])
+
+    frames_info = json.loads((out_dir / "frames.json").read_text())
+    transcript = json.loads((out_dir / "transcript.json").read_text())
+    records = frames_info["records"]
+    events = frames_info["anchor_events"]
+
+    n = len(cum)
+    times = np.arange(n) / fps
+    duration = n / fps
+
+    width = max(12, duration / 20)
+    fig, (ax_v, ax_r, ax_a) = plt.subplots(
+        3, 1, figsize=(width, 11), sharex=True,
+        gridspec_kw={"height_ratios": [3, 1, 2]},
+    )
+    fig.suptitle(title, fontsize=14)
+
+    # ---- 상단: 누적(anchor 대비) diff + 판정 레코드 ----
+    ax_v.plot(times, cum, color="#1f77b4", lw=0.6, label="누적diff(anchor 대비)")
+    ax_v.axhline(cum_threshold, color="red", ls="--", lw=1, label=f"cum_threshold={cum_threshold}")
+
+    for e in events:
+        ax_v.axvspan(e["transition_start_idx"] / fps, e["trigger_idx"] / fps,
+                     color="orange", alpha=0.15)
+        ax_v.plot(e["anchor_idx"] / fps, 0, marker="v", color="blue", ms=7, zorder=5)
+
+    for i, r in enumerate(records):
+        idx = min(int(r["time"] * fps), n - 1)
+        color = STATUS_COLOR[r["status"]]
+        marker = "*" if "importance-point" in r["sources"] else "^"
+        ms = 11 if marker == "*" else 8
+        ax_v.plot(r["time"], cum[idx], marker=marker, color=color, ms=ms, zorder=5)
+        ax_v.text(r["time"], cum[idx], f" {i}", fontsize=6, va="bottom", color=color)
+
+    ax_v.plot([], [], marker="v", color="blue", ms=7, lw=0, label="앵커(기준커서)")
+    ax_v.plot([], [], marker="^", color="green", ms=8, lw=0, label="채택 프레임")
+    ax_v.plot([], [], marker="^", color="gray", ms=8, lw=0, label="탈락 프레임(사유는 frames.json)")
+    ax_v.plot([], [], marker="*", color="green", ms=11, lw=0, label="importance-point")
+    ax_v.axvspan(0, 0, color="orange", alpha=0.15, label="전환구간")
+    n_acc = sum(1 for r in records if r["status"] == "accepted")
+    ax_v.set_ylabel("누적 diff (anchor 대비)")
+    ax_v.legend(loc="upper right", fontsize=8, ncol=3)
+    ax_v.set_title(f"영상: 후보 {len(records)}건 (채택 {n_acc} / 탈락 {len(records) - n_acc})",
+                   fontsize=10)
+
+    # ---- 중단: 순간변화율 ----
+    ax_r.plot(times, rate, color="#ff7f0e", lw=0.5)
+    ax_r.axhline(rate_threshold, color="green", ls="--", lw=1,
+                 label=f"rate_threshold={rate_threshold} (전환 진행중 판정)")
+    ax_r.set_ylabel("순간변화율\n(인접프레임)")
+    ax_r.legend(loc="upper right", fontsize=8)
+
+    # ---- 하단: STT 단어 밀도 + importance-point ----
+    words = transcript.get("words", [])
+    if words:
+        ax_a.eventplot([w["start"] for w in words], lineoffsets=0.5, linelengths=0.8,
+                       color="#888888", lw=0.4, label=f"STT 단어({len(words)}개)")
+    point_times = [t for r in records for t in r.get("point_times", [])]
+    for t in point_times:
+        ax_a.axvline(t, color="crimson", lw=1.2, alpha=0.8)
+    if point_times:
+        ax_a.plot([], [], color="crimson", lw=1.2, label=f"importance-point({len(point_times)}개)")
+    ax_a.set_ylim(0, 1)
+    ax_a.set_yticks([])
+    ax_a.set_ylabel("음성")
+    ax_a.set_xlabel("시간(초)")
+    ax_a.legend(loc="upper left", fontsize=8)
+
+    plt.tight_layout()
+    out_path = out_dir / "debug_graph.png"
+    fig.savefig(out_path, dpi=110)
+    plt.close(fig)
+    return out_path
