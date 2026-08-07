@@ -1,0 +1,25 @@
+[project]
+name = "analysis-video-gui"
+version = "0.1.0"
+description = "analysis-video 산출물 검토·교정용 디버깅 GUI — 허브 + 독립 멀티 윈도우"
+requires-python = ">=3.11"
+dependencies = [
+    "analysis-video",
+    "PySide6>=6.6",
+    "pyqtgraph>=0.13.7",
+    "sounddevice>=0.4.6",
+    "numpy>=1.26",
+]
+
+[project.scripts]
+analysis-video-gui = "analysis_video_gui.app:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/analysis_video_gui"]
+
+[tool.uv.sources]
+analysis-video = { workspace = true }
