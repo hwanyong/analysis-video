@@ -33,9 +33,6 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     video, out_dir = _resolve(args.path)
-    if not (out_dir / "metadata.json").exists():
-        print(f"경고: {out_dir}/metadata.json 없음 — 플레이어만 유효합니다 "
-              "(frames 스테이지를 먼저 실행하세요)", file=sys.stderr)
 
     app = QApplication(sys.argv if argv is None else [sys.argv[0], *argv])
     app.setApplicationName("analysis-video-gui")
@@ -44,6 +41,12 @@ def main(argv: list[str] | None = None) -> int:
     from .windows.hub import HubWindow
 
     session = Session(video, out_dir)
+    # 산출물이 있는지는 Store가 분석 단위를 고른 뒤에야 알 수 있다 — 여기서 경로를
+    # 다시 조립하면 단위 레이아웃이 바뀔 때마다 이 경고가 거짓말을 한다
+    if not session.store.metadata:
+        print(f"경고: {out_dir}에 분석 산출물 없음 — 플레이어만 유효합니다 "
+              "(frames 스테이지를 먼저 실행하세요)", file=sys.stderr)
+
     hub = HubWindow(session)
     hub.show()
     session.restore_layout()

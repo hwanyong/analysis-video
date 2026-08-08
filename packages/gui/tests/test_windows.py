@@ -71,6 +71,52 @@ def test_all_windows_open_and_sync(analyzed, qapp, pump):
         session.engine.shutdown()
 
 
+def test_images_resolve_against_the_analysis_unit(analyzed, qapp, pump):
+    """metadata의 image는 **단위 디렉토리** 기준 상대경로다. 루트 기준으로 풀면
+    파일이 하나도 안 잡혀 모든 창이 조용히 '이미지 파일 없음'만 띄운다 —
+    창은 정상으로 보이고 테스트도 통과하므로, 경로가 실제로 풀리는지를 여기서 못박는다."""
+    video, out_dir = analyzed
+    session = Session(video, out_dir)
+    try:
+        assert session.out_dir == session.store.out_dir, "이미지 기준은 단위 디렉토리"
+        frames = session.store.frames
+        assert frames, "픽스처가 프레임을 하나도 안 뽑았다 — 테스트가 무의미해진다"
+        for f in frames:
+            assert (session.out_dir / f["image"]).exists(), \
+                f"{f['image']}가 {session.out_dir} 기준으로 풀리지 않는다"
+
+        fs = session.open_window("frame_sync")
+        gal = session.open_window("gallery")
+        session.engine.seek(frames[-1]["time"])
+        pump(1.0)
+        assert fs._image.pixmap() and not fs._image.pixmap().isNull(), \
+            "프레임 싱크가 그림 대신 안내 문구를 띄우고 있다"
+        assert gal._list.count() >= len(frames)
+        assert not gal._list.item(0).icon().isNull(), "갤러리 썸네일이 비었다"
+    finally:
+        session.engine.shutdown()
+
+
+def test_out_dir_follows_unit_switch(analyzed, qapp):
+    """단위를 갈아타면 이미지가 있는 곳도 같이 바뀐다 — 세션이 경로를 스냅샷으로
+    들고 있으면 전환 후 이전 단위의 그림을 찾다가 전부 놓친다."""
+    from analysis_video import cli
+
+    video, out_dir = analyzed
+    assert cli.main(["frames", str(video), "--out", str(out_dir), "--range", "2-6"]) == 0
+    session = Session(video, out_dir)
+    try:
+        names = [e["name"] for e in session.store.available_units()]
+        assert len(names) == 2, f"단위가 둘이어야 한다: {names}"
+        other = next(n for n in names if n != session.store.unit)
+        session.set_unit(other)
+        assert session.out_dir == out_dir / "runs" / other
+        for f in session.store.frames:
+            assert (session.out_dir / f["image"]).exists()
+    finally:
+        session.engine.shutdown()
+
+
 def test_closed_window_signals_are_disconnected(analyzed, qapp, pump):
     """닫힌 창이 세션 수명 시그널을 계속 받으면 RuntimeError가 쏟아지고 객체가 샌다."""
     video, out_dir = analyzed

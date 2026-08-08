@@ -69,10 +69,10 @@ class Session(QObject):
     def __init__(self, video_path: Path, out_dir: Path, unit: str | None = None):
         super().__init__()
         self.video_path = video_path
-        self.out_dir = out_dir
+        self.root = out_dir            # 영상 단위 — 전사·검출 캐시·GT 플래그가 여기
         self.store = Store(video_path, out_dir, unit)
         self.engine = PlayerEngine(video_path, self.store.duration)
-        self.flags = FlagStore(out_dir)
+        self.flags = FlagStore(self.root)
         self.settings = QSettings("analysis-video", "gui")
         # 탈락 후보는 기본 표시 — "왜 안 뽑혔나"가 검토의 절반이고, 실측 탈락 수는
         # 채택의 1/5 수준이라 화면을 어지럽히지 않는다. R로 끈다.
@@ -80,6 +80,15 @@ class Session(QObject):
         self.traverse = {k for k, _, on in MARK_KINDS if on}
         self.windows: dict[str, object] = {}
         self.router = ShortcutRouter(self)
+
+    @property
+    def out_dir(self) -> Path:
+        """현재 분석 단위의 디렉토리 — 이미지·metadata·compare.json이 있는 곳.
+
+        단위마다 달라지므로 스냅샷으로 들고 있으면 안 된다. Store가 유일한 원천이고
+        여기서는 위임만 한다 — 단위를 갈아타면 이 값도 따라간다.
+        영상 전체에 걸린 것(전사·GT 플래그)은 `root`."""
+        return self.store.out_dir
 
     # ---------- 마크 순회 ----------
 
