@@ -89,12 +89,6 @@ def build_metadata(video_path: Path, transcript: dict, build: dict,
             "interval": r["interval"],
             "dialogue": r["dialogue"],
         }
-        if r.get("reasons"):
-            f["reasons"] = r["reasons"]
-        if r.get("point_times"):
-            f["point_times"] = [round(t, 2) for t in r["point_times"]]
-        if r.get("trigger_dialogue"):
-            f["trigger_dialogue"] = r["trigger_dialogue"]
         f["yavg"] = r.get("yavg")
         f["hash"] = r.get("hash")
         frames.append(f)
@@ -104,11 +98,6 @@ def build_metadata(video_path: Path, transcript: dict, build: dict,
         entry: dict = {"time": round(r["time"], 2), "sources": r["sources"],
                        "screen": r.get("screen"),
                        "reject_reason": r["reject_reason"], "image": r.get("image")}
-        # 탈락해도 importance-point의 근거는 metadata에 남긴다 — 계약(보존 약속) 이행
-        if r.get("reasons"):
-            entry["reasons"] = r["reasons"]
-        if r.get("point_times"):
-            entry["point_times"] = [round(t, 2) for t in r["point_times"]]
         # 중복 판정이 옳았는지 확인하려면 병합 대상으로 건너뛸 수 있어야 한다
         if r.get("dup_of") is not None:
             entry["dup_of"] = r["dup_of"]
@@ -121,6 +110,9 @@ def build_metadata(video_path: Path, transcript: dict, build: dict,
             "duration": round(build["duration"], 2),
             "fps": build["fps"],
         },
+        # 이 분석이 실제로 들여다본 구간. 영상 전체면 [0, duration].
+        # 없으면 소비자가 "빈 구간"과 "안 본 구간"을 구분할 수 없다.
+        "window": build.get("window", [0.0, round(build["duration"], 2)]),
         # 화면 구간 목록 — 이미지가 하나도 없는 화면도 여기엔 남는다.
         # 이것이 없으면 후보가 전부 탈락한 화면이 기록에서 사라져 그동안의
         # 대사까지 함께 소실된다(실측 유실 최대 64%).

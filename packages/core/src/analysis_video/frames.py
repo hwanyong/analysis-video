@@ -1,16 +1,19 @@
-"""프레임 후보 통합 — initial ∪ anchor-diff(-pre) ∪ AdaptiveDetector ∪ importance-points.
+"""프레임 후보 통합 — initial ∪ anchor-diff(-pre) ∪ AdaptiveDetector.
+
+추출 기준은 **프레임 변화량 하나**다. 예전에는 호출 에이전트가 전사를 읽고
+지정한 "중요한 시각"(importance-point)에서도 뽑았지만, 화면을 보지 못한 채
+텍스트만으로 고른 시각이 시각적 검출과 같은 자리를 놓고 경쟁해 기준이 흐려졌다.
+사후 정밀 추출은 `frame --at`이 맡는다.
 
 anchor-diff 이벤트는 후보를 **둘** 낸다: 전환 직전(anchor-diff-pre = 사라지려는
 화면의 마지막 안정 프레임)과 전환 후 트리거(anchor-diff = 새 화면). 어느 한쪽만
 잡으면 반드시 잃는다 — 직후만 잡으면 판서 완성본을 매번 놓치고, 직전만 잡으면
-전부 한 칸씩 밀리며 마지막 화면이 사라진다. 정적 슬라이드에서는 둘이 같은
-화면이므로 중복 게이트가 하나로 접는다.
+전부 한 칸씩 밀리며 마지막 화면이 사라진다. 화면이 실제로 바뀌지 않은 전환
+(자막 교체 등)에서는 직전 후보를 아예 내지 않는다(_pair_changed).
 
 판정 기록 보존 원칙: 어떤 후보도 조용히 사라지지 않는다. 탈락 이미지는
 frames/rejected/로 이동하고 레코드에 사유가 남으며, phash 중복으로 탈락해도
-출처(sources)·근거(reasons)·point_times는 생존 레코드로 승계된다.
-importance-point를 품고 있던 후보가 어두움/추출실패로 탈락하면 point 자체
-시각에서 폴백 재캡처를 시도한다 — 문서화된 계약(reason은 metadata에 보존)의 이행.
+출처(sources)는 생존 레코드로 승계된다.
 
 파일명은 순번 기반(scene_003_t0012.33.jpg)이라 시각 반올림 충돌이 불가능하다.
 검출기 결과는 out_dir에 캐시(detect_anchor.npz, detect_adaptive.json)되어
@@ -124,33 +127,43 @@ def _cached_adaptive(video_path: Path, out_dir: Path, duration: float,
     return entries
 
 
-def build_frames(video_path: Path, out_dir: Path, points: list[dict], *,
+def build_frames(video_path: Path, out_dir: Path, *,
+                 cache_dir: Path | None = None,
+                 window: tuple[float, float] | None = None,
                  anchor_threshold: float = 0.02, rate_threshold: float = 0.0015,
                  cut_area_threshold: float = 0.04,
                  yavg_floor: float = 5.0, phash_dup_distance: int = 4,
                  ssim_dup_threshold: float = 0.9,
-                 pair_dup_threshold: float = 0.93,
-                 near_distance: float = 2.0) -> dict:
+                 pair_dup_threshold: float = 0.93) -> dict:
+    """out_dir = 이 분석 단위의 디렉터리, cache_dir = 검출 캐시를 둘 곳.
+
+    검출은 영상 전체에 대해 한 번만 돌려 cache_dir에 두고, 단위는 자기 window로
+    거른다. 단위마다 다시 검출하면 구간 수만큼 전 프레임 디코드를 반복하게 되고,
+    구간별로 디코드를 잘라내면 anchor-diff와 AdaptiveDetector가 공유하는 프레임
+    **번호** 공간이 어긋난다(커밋 291e64e에서 397초 오차를 낸 그 결합).
+    """
+    cache_dir = cache_dir if cache_dir is not None else out_dir
     frames_dir = out_dir / "frames"
     rejected_dir = frames_dir / "rejected"
     frames_dir.mkdir(parents=True, exist_ok=True)
     rejected_dir.mkdir(parents=True, exist_ok=True)
 
     duration = media.get_duration(video_path)
+    w_start, w_end = window if window is not None else (0.0, duration)
 
-    anchor_result = _cached_anchor(video_path, out_dir, anchor_threshold,
+    anchor_result = _cached_anchor(video_path, cache_dir, anchor_threshold,
                                    rate_threshold, cut_area_threshold)
     fps = anchor_result["fps"]
     time_series = anchor_result["time_series"]
 
     def new_candidate(time: float, detected_at: float, source: str) -> dict:
-        return {"time": time, "detected_at": detected_at,
-                "sources": [source], "reasons": [], "point_times": []}
+        return {"time": time, "detected_at": detected_at, "sources": [source]}
 
-    # 첫 슬라이드(t≈0)는 어떤 검출기도 방출하지 않는다 — 명시적 시드.
-    # 오프닝 페이드 대비로 안정화를 거친다; 어두우면 게이트가 사유와 함께 걸러준다.
-    initial_t = adaptive.pick_stable_time(video_path, 0.0, duration, offset=0.5)
-    candidates = [new_candidate(initial_t, 0.0, "initial")]
+    # 구간의 첫 화면은 어떤 검출기도 방출하지 않는다(전환이 구간 시작 전에
+    # 일어났으므로) — 명시적 시드. 오프닝 페이드 대비로 안정화를 거친다;
+    # 어두우면 게이트가 사유와 함께 걸러준다.
+    initial_t = adaptive.pick_stable_time(video_path, w_start, duration, offset=0.5)
+    candidates = [new_candidate(initial_t, w_start, "initial")]
 
     n_pair_dup = 0
     for e in anchor_result["events"]:
@@ -171,24 +184,17 @@ def build_frames(video_path: Path, out_dir: Path, points: list[dict], *,
         log(f"[frames] 전환 {len(anchor_result['events'])}건 중 {n_pair_dup}건은 "
             f"화면이 실제로 바뀌지 않았다 — 전환 직전 후보 생략")
 
-    for entry in _cached_adaptive(video_path, out_dir, duration,
+    for entry in _cached_adaptive(video_path, cache_dir, duration,
                                   anchor_result["time_series"]):
         candidates.append(new_candidate(entry["time"], entry["detected_at"], "adaptive"))
 
-    # importance-points 병합: 기존 후보와 가까우면 태그만 붙이고, 멀면 새로 캡처
-    for p in points:
-        near = min(candidates, key=lambda c: abs(c["time"] - p["time"]), default=None)
-        if near is not None and abs(near["time"] - p["time"]) <= near_distance:
-            if "importance-point" not in near["sources"]:
-                near["sources"].append("importance-point")
-            near["reasons"].append(p["reason"])
-            near["point_times"].append(p["time"])
-        else:
-            t = min(p["time"] + 0.3, duration - 0.05)
-            c = new_candidate(t, p["time"], "importance-point")
-            c["reasons"] = [p["reason"]]
-            c["point_times"] = [p["time"]]
-            candidates.append(c)
+    # 구간 밖 후보는 버린다. initial 시드는 구간 시작에서 나왔으므로 살린다.
+    n_all = len(candidates)
+    candidates = [c for c in candidates
+                  if c["sources"] == ["initial"] or w_start <= c["time"] <= w_end]
+    if len(candidates) != n_all:
+        log(f"[frames] 구간 {w_start:.1f}~{w_end:.1f}초 밖 후보 "
+            f"{n_all - len(candidates)}건 제외")
 
     log(f"[frames] 후보 {len(candidates)}건 추출·게이트 판정 중...")
     records: list[dict] = []
@@ -223,12 +229,10 @@ def build_frames(video_path: Path, out_dir: Path, points: list[dict], *,
         if dup is not None:
             dst = rejected_dir / img.name
             img.rename(dst)
-            # 중복 탈락이라도 출처·근거는 생존 레코드로 승계 — provenance 소실 금지
+            # 중복 탈락이라도 출처는 생존 레코드로 승계 — provenance 소실 금지
             for s in c["sources"]:
                 if s not in dup["sources"]:
                     dup["sources"].append(s)
-            dup["reasons"].extend(r for r in c["reasons"] if r not in dup["reasons"])
-            dup["point_times"].extend(t for t in c["point_times"] if t not in dup["point_times"])
             # dup_of는 사유 문자열과 별개의 기계 판독용 필드다. 소비자가 "of=…"를
             # 정규식으로 되파싱하게 두면 표현이 바뀔 때마다 조용히 끊긴다.
             c.update(status="rejected", reject_reason=f"phash-dup(of={dup['time']:.2f})",
@@ -243,40 +247,24 @@ def build_frames(video_path: Path, out_dir: Path, points: list[dict], *,
 
     # 순번 기반 파일명 — 시각 반올림 충돌로 채택 이미지가 덮어써지는 사고를 차단
     for seq, c in enumerate(sorted(candidates, key=lambda c: c["time"])):
-        prefix = "point" if c["sources"] == ["importance-point"] else "scene"
-        gate(c, frames_dir / f"{prefix}_{seq:03d}_t{c['time']:07.2f}.jpg")
-
-    # importance-point 폴백: 병합 호스트가 어두움/추출실패로 탈락하면 point 자체
-    # 시각에서 재캡처를 시도한다 (phash-dup 탈락은 승계가 끝났으므로 제외)
-    lost_points = []
-    for r in records:
-        if r["status"] == "rejected" and r["point_times"] \
-                and not r["reject_reason"].startswith("phash-dup"):
-            for pt, reason in zip(r["point_times"], r["reasons"]):
-                lost_points.append((pt, reason))
-    for seq, (pt, reason) in enumerate(lost_points):
-        t = min(pt + 0.3, duration - 0.05)
-        c = new_candidate(t, pt, "importance-point")
-        c["reasons"] = [reason]
-        c["point_times"] = [pt]
-        c["fallback"] = True
-        log(f"[frames] importance-point 폴백 재캡처: t={pt:.2f}")
-        gate(c, frames_dir / f"point_fb{seq:02d}_t{t:07.2f}.jpg")
+        gate(c, frames_dir / f"scene_{seq:03d}_t{c['time']:07.2f}.jpg")
 
     records.sort(key=lambda r: r["time"])
     for r in accepted:
         r["hash"] = str(r.pop("_hash"))
 
     log(f"[frames] 완료: 채택 {len(accepted)}건 / 탈락 {len(records) - len(accepted)}건")
+    events = [e for e in anchor_result["events"]
+              if w_start <= e["trigger_time"] <= w_end]
     return {
         "records": records, "duration": duration, "fps": fps,
-        "anchor_events": anchor_result["events"],
+        "window": [round(w_start, 2), round(w_end, 2)],
+        "anchor_events": events,
         "params": {
             "anchor_threshold": anchor_threshold, "rate_threshold": rate_threshold,
             "cut_area_threshold": cut_area_threshold,
             "yavg_floor": yavg_floor, "phash_dup_distance": phash_dup_distance,
             "ssim_dup_threshold": ssim_dup_threshold,
             "pair_dup_threshold": pair_dup_threshold,
-            "near_distance": near_distance,
         },
     }

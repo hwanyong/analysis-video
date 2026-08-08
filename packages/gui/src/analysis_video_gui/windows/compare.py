@@ -70,26 +70,39 @@ class CompareWindow(ChildWindow):
         self.session.flags.toggle(self.session.engine.position())
 
     def _on_cell_clicked(self, row: int, _col: int) -> None:
-        # 테이블은 항상 flags 배열 순서(시간 오름차순)로 채워지므로 인덱스가 일치한다
-        flags = self.session.flags.flags
+        # 표는 '이 단위의 구간 안' 플래그만 시간순으로 채운다 — 전체 배열로 인덱싱하면
+        # 구간 밖 플래그가 있을 때 다른 행으로 이동한다
+        flags = self._scoped_flags()
         if 0 <= row < len(flags):
             self.session.engine.seek(flags[row]["time"])
 
+    def _scoped_flags(self) -> list[dict]:
+        """GT 플래그는 영상 전체에 대해 찍히지만 분석 단위는 일부만 본다.
+        분석하지 않은 구간의 GT를 분모에 넣으면 recall이 '안 본 만큼 실패'로
+        찍혀 지표가 무의미해진다."""
+        lo, hi = self.session.store.window or [0.0, self.session.store.duration]
+        return [f for f in self.session.flags.flags if lo <= f["time"] <= hi]
+
     def _metrics(self) -> dict:
         detected = [f["time"] for f in self.session.store.frames]
-        return compare_metrics(self.session.flags.times(), detected, self._tol.value())
+        gt = [f["time"] for f in self._scoped_flags()]
+        return compare_metrics(gt, detected, self._tol.value())
 
     def _recompute(self) -> None:
         m = self._metrics()
         prec = "—" if m["precision"] is None else f"{m['precision']:.1%}"
         rec = "—" if m["recall"] is None else f"{m['recall']:.1%}"
+        st = self.session.store
+        n_out = len(self.session.flags.flags) - m["n_flags"]
+        scope = f" · 구간 밖 GT {n_out}개는 제외" if n_out else ""
         self._summary.setText(
+            f"단위 {st.unit} ({st.window[0]:.0f}~{st.window[1]:.0f}초){scope}<br>"
             f"GT {m['n_flags']}개 · 검출 {m['n_detected']}개 &nbsp;|&nbsp; "
             f"<b>precision {prec}</b> (검출 중 GT 근방 비율) &nbsp; "
             f"<b>recall {rec}</b> (GT 중 검출된 비율)")
 
         matched_by_flag = {x["flag"]: x for x in m["matched"]}
-        flags = self.session.flags.flags
+        flags = self._scoped_flags()
         self._table.setRowCount(len(flags))
         for row, fl in enumerate(flags):
             hit = matched_by_flag.get(fl["time"])

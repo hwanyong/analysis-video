@@ -1,12 +1,20 @@
 """analysis-video CLI — 에이전트 친화 계약 구현.
 
-직렬 흐름 강제: split → transcribe → (호출 에이전트가 transcript.json을 읽고
-points.json 작성 — 텍스트 중요도 분석은 패키지 밖) → frames --points → metadata.json.
+흐름: split → transcribe → frames → context.md. 중간에 멈추지 않는다.
+이미지 추출 기준은 **프레임 변화량 하나**다. 예전에는 호출 에이전트가 전사를 읽고
+points.json으로 "중요한 시각"을 지정하면 그 자리에서도 프레임을 뽑았는데, 그건
+산출물이 선별된 부분집합이던 시절의 장치다. 지금 context.md는 모든 화면과 모든
+문장을 담은 완전 분할이므로 미리 고를 이유가 없고, 오히려 화면을 보지 못한 채
+텍스트만으로 고른 시각이 시각적 검출과 같은 자리를 놓고 경쟁해 기준이 흐려졌다.
+사후 정밀 추출이 필요하면 `frame --at`이 그 역할을 한다 — context.md를 읽고
+이미지와 대사를 **함께 본 뒤** 고르는 것이라 더 낫다.
+
+`--range`를 여러 번 주면 그만큼의 **독립 분석 단위**가 runs/ 아래에 생긴다.
+겹쳐도 무방하다(runs.py 참조). split·transcribe와 검출 캐시는 영상 전체에 대해
+한 번만 만들어 공유한다.
+
 stdout = 봉투 JSON 한 건(agent-guide 제외), 로그 = stderr.
-state.json 덕분에 같은 명령 재실행 = 이어하기(타임아웃 내성). frames는 결정적
-재계산이지만 검출기 캐시(detect_anchor.npz/detect_adaptive.json)가 있어 재호출이
-추출부터 이어지는 효과를 낸다. frame --at 산출물은 requests.json 장부로 보존되어
-frames 재실행 후에도 metadata.json에 다시 합쳐진다(구간·대사는 새 프레임 기준 재계산).
+state.json 덕분에 같은 명령 재실행 = 이어하기(타임아웃 내성).
 """
 import argparse
 import json
@@ -15,20 +23,18 @@ import sys
 from importlib.util import find_spec
 from pathlib import Path
 
-from . import __version__, align, context, errors, manifest, media, stt
+from . import __version__, align, context, errors, manifest, media, runs, stt
 from . import frames as frames_mod
-from . import points as points_mod
 from . import split as split_mod
 from .agent_guide import GUIDE
-from .detect import adaptive
 from .errors import EXIT_DEPS, EXIT_INPUT, EXIT_OK, CliError, emit, log
 from .stt.base import MODEL_SIZES
 
-NEXT_POINTS_ACTION = (
-    "transcript.json을 읽고 대사 기반으로 중요한 시간대를 골라 points.json을 작성한 뒤 "
-    "'analysis-video frames <video> --points points.json'을 실행하세요. "
-    "points의 time은 봉투의 duration(초) 이내여야 합니다. "
-    "중요한 순간이 없다면 --no-points로 명시적으로 생략합니다."
+NEXT_READ_CONTEXT = (
+    "context.md를 읽으세요 — 화면별로 이미지·시간·대사만 담은 AI용 산출물입니다. "
+    "특정 순간의 프레임이 더 필요하면 'analysis-video frame <video> --at <초> "
+    "--reason \"...\"'로 뽑을 수 있습니다. 탈락 사유·검출 파라미터 등 전체 기록은 "
+    "metadata.json에 있습니다."
 )
 
 
@@ -109,55 +115,57 @@ def _video_resource(state: dict, original: Path) -> Path:
     return original
 
 
-def run_frames(video: Path, out_dir: Path, points_path: Path | None) -> dict:
+def run_frames(video: Path, out_dir: Path, ranges: list[str] | None = None) -> dict:
+    """구간마다 독립 분석 단위를 만든다. 구간이 없으면 'full' 단위 하나."""
     state = manifest.load_state(out_dir)
     manifest.check_source(state, video)
     manifest.require_done(
         state, "transcribe",
-        "직렬 흐름: 텍스트 분석이 끝나야 프레임 분석이 가능합니다 — "
+        "대사가 있어야 화면에 붙일 수 있습니다 — "
         f"analysis-video transcribe {video} 를 먼저 실행하세요")
 
     transcript = json.loads((out_dir / "transcript.json").read_text(encoding="utf-8"))
     video_src = _video_resource(state, video)
     duration = media.get_duration(video_src)
-    pts = [] if points_path is None else points_mod.load_points(points_path, duration)
+    units = runs.resolve(ranges, duration)
 
-    # 재계산 전 이전 완료 상태·산출물을 먼저 무효화 — 도중에 킬되면 state가
-    # '완료'인 채 삭제된 이미지를 가리키는 stale metadata가 남는 사고 방지
-    if manifest.is_done(state, "frames"):
-        manifest.invalidate_stage(state, "frames")
-        manifest.save_state(out_dir, state)
-    for stale in (out_dir / "metadata.json", out_dir / "frames.json"):
-        stale.unlink(missing_ok=True)
-    frames_dir = out_dir / "frames"
-    if frames_dir.exists():
-        shutil.rmtree(frames_dir)
+    made = []
+    for rng in units:
+        made.append(_run_unit(video, video_src, out_dir, rng, transcript, duration))
+    entries = runs.merge_index(out_dir, made)
+    index = context.write_index(out_dir, video.name, duration, entries)
 
-    build = frames_mod.build_frames(video_src, out_dir, pts)
+    manifest.mark_done(state, "frames", {"runs": [e["name"] for e in entries],
+                                         "index": str(index)})
+    manifest.save_state(out_dir, state)
+    return {"stage": "frames", "skipped": False, "index": str(index),
+            "runs": made}
+
+
+def _run_unit(video: Path, video_src: Path, out_dir: Path, rng, transcript: dict,
+              duration: float) -> dict:
+    unit = runs.unit_dir(out_dir, rng)
+    if unit.exists():
+        shutil.rmtree(unit)          # 결정적 재계산 — 이전 산출물이 섞이지 않게
+    unit.mkdir(parents=True, exist_ok=True)
+    win = runs.window(rng, duration)
+    log(f"[frames] 분석 단위 '{runs.name(rng)}' ({runs.label(rng)}) 시작")
+
+    build = frames_mod.build_frames(video_src, unit, cache_dir=out_dir, window=win)
     screens = align.attach_dialogue(build["records"], transcript["segments"],
-                                    build["duration"], build["anchor_events"])
-
-    manifest.write_json_atomic(out_dir / "frames.json", {
+                                    build["duration"], build["anchor_events"], win)
+    manifest.write_json_atomic(unit / "frames.json", {
         "records": build["records"], "anchor_events": build["anchor_events"],
         "params": build["params"]})
-
     metadata = manifest.build_metadata(video, transcript, build, screens)
-    _merge_requested(out_dir, metadata)
-    manifest.save_metadata(out_dir, metadata)
-    context_path = context.write(out_dir, metadata, video.name)
+    _merge_requested(unit, metadata)
+    manifest.save_metadata(unit, metadata)
+    context.write(unit, metadata, f"{video.name} — {runs.label(rng)}")
 
-    n_accepted = sum(1 for r in build["records"] if r["status"] == "accepted")
-    outputs = {
-        "metadata": str(out_dir / "metadata.json"),
-        "context": str(context_path),
-        "frames_dir": str(frames_dir),
-        "n_accepted": n_accepted,
-        "n_rejected": len(build["records"]) - n_accepted,
-        "n_points": len(pts),
-    }
-    manifest.mark_done(state, "frames", outputs)
-    manifest.save_state(out_dir, state)
-    return {"stage": "frames", "skipped": False, **outputs}
+    n_acc = len(metadata["frames"])
+    return {"name": runs.name(rng), "range": list(rng) if rng else None,
+            "dir": str(unit), "n_screens": len(screens), "n_frames": n_acc,
+            "n_rejected": len(metadata["rejected"])}
 
 
 def _requests_path(out_dir: Path) -> Path:
@@ -185,8 +193,9 @@ def _recompute_request(entry: dict, metadata: dict) -> None:
     else:
         entry["interval"] = [0.0, round(duration, 2)]
         entry["dialogue"] = align.segments_in(segments, 0.0, duration)
+    # 이 시각에 실제로 무슨 말이 나왔는지는 요청의 근거이므로 따로 남긴다
     seg = align.find_segment_at(segments, entry["at"])
-    entry["trigger_dialogue"] = [seg] if seg else []
+    entry["said_at"] = seg["text"].strip() if seg else ""
 
 
 def _merge_requested(out_dir: Path, metadata: dict) -> None:
@@ -201,18 +210,46 @@ def _merge_requested(out_dir: Path, metadata: dict) -> None:
     metadata["requested"] = requests
 
 
-def run_frame_at(video: Path, out_dir: Path, at: float, reason: str) -> dict:
+def resolve_run(out_dir: Path, name: str | None) -> Path:
+    """어느 분석 단위에 대해 작업할지 — 단위가 하나뿐이면 그것으로 자동 결정."""
+    entries = runs.load_index(out_dir)
+    if not entries:
+        raise CliError(EXIT_INPUT, "no-runs",
+                       "분석 단위가 없습니다 — frames를 먼저 실행하세요",
+                       hint="analysis-video frames <video>")
+    names = [e["name"] for e in entries]
+    if name is None:
+        if len(names) > 1:
+            raise CliError(EXIT_INPUT, "run-ambiguous",
+                           f"분석 단위가 여럿입니다 — --run으로 고르세요: {names}")
+        name = names[0]
+    if name not in names:
+        raise CliError(EXIT_INPUT, "run-not-found",
+                       f"'{name}' 분석 단위가 없습니다 — 있는 것: {names}")
+    return out_dir / "runs" / name
+
+
+def run_frame_at(video: Path, out_dir: Path, at: float, reason: str,
+                 run_name: str | None = None) -> dict:
+    from .detect import adaptive
+
     state = manifest.load_state(out_dir)
     manifest.check_source(state, video)
     manifest.require_done(
-        state, "frames",
-        f"analysis-video frames {video} --points ... 를 먼저 실행하세요")
-    metadata = manifest.load_metadata(out_dir)
+        state, "frames", f"analysis-video frames {video} 를 먼저 실행하세요")
+    unit = resolve_run(out_dir, run_name)
+    metadata = manifest.load_metadata(unit)
     duration = metadata["source"]["duration"]
     if not (0.0 <= at <= duration):
         raise CliError(EXIT_INPUT, "time-out-of-range",
                        f"--at {at}: 영상 범위(0~{duration}초) 밖입니다")
+    lo, hi = metadata.get("window", [0.0, duration])
+    if not (lo <= at <= hi):
+        raise CliError(EXIT_INPUT, "time-out-of-window",
+                       f"--at {at}: 이 분석 단위가 다루는 구간({lo}~{hi}초) 밖입니다",
+                       hint="--run으로 다른 단위를 고르거나 그 구간을 분석하세요")
 
+    out_dir = unit          # 이하 산출물은 전부 단위 안에 쓴다
     req_dir = out_dir / "requested"
     req_dir.mkdir(parents=True, exist_ok=True)
     requests = json.loads(_requests_path(out_dir).read_text(encoding="utf-8")) \
@@ -266,30 +303,27 @@ def cmd_transcribe(args) -> int:
     run_split(video, out_dir)  # 멱등 — 미완료면 수행
     r = run_transcribe(video, out_dir, args.model, args.stt_backend, args.language,
                        force=args.force)
-    emit({"ok": True, "out_dir": str(out_dir), **r, "next_action": NEXT_POINTS_ACTION})
+    emit({"ok": True, "out_dir": str(out_dir), **r,
+          "next": f"analysis-video frames {video}"})
     return EXIT_OK
 
 
 def cmd_frames(args) -> int:
     video = check_video(args.video)
     out_dir = resolve_out(video, args.out)
-    points_path = None if args.no_points else args.points
-    r = run_frames(video, out_dir, points_path)
-    emit({"ok": True, "out_dir": str(out_dir), **r,
-          "next": "context.md를 읽으세요 — 화면별로 이미지·시간·대사만 담은 AI용"
-                  " 산출물입니다. 탈락 사유·검출 파라미터 등 전체 기록이 필요하면"
-                  " metadata.json을 보세요"})
+    r = run_frames(video, out_dir, args.range)
+    emit({"ok": True, "out_dir": str(out_dir), **r, "next": NEXT_READ_CONTEXT})
     return EXIT_OK
 
 
 def cmd_frame(args) -> int:
     video = check_video(args.video)
     out_dir = resolve_out(video, args.out)
-    entry = run_frame_at(video, out_dir, args.at, args.reason)
+    entry = run_frame_at(video, out_dir, args.at, args.reason, args.run)
     # 봉투는 요약만 — 전체 대사는 metadata.json의 requested[]에 있다 (stdout 비대 방지)
     summary = {k: entry[k] for k in ("at", "time", "reason", "image", "yavg", "interval")}
     summary["n_dialogue"] = len(entry["dialogue"])
-    for key in ("trigger_dialogue", "warning", "skipped"):
+    for key in ("said_at", "warning", "skipped"):
         if entry.get(key):
             summary[key] = entry[key]
     emit({"ok": True, "out_dir": str(out_dir), "stage": "frame", **summary,
@@ -306,16 +340,13 @@ def cmd_analyze(args) -> int:
         return EXIT_OK
 
     stages.append(run_transcribe(video, out_dir, args.model, args.stt_backend, args.language))
-    no_points = getattr(args, "no_points", False)
-    if args.until == "transcribe" or (args.points is None and not no_points):
-        # 샌드위치 틈새: 텍스트 중요도 분석은 호출자의 몫 — 여기서 멈춘다
-        emit({"ok": True, "out_dir": str(out_dir), "stages": stages,
-              "next_action": NEXT_POINTS_ACTION})
+    if args.until == "transcribe":
+        emit({"ok": True, "out_dir": str(out_dir), "stages": stages, "next": "frames"})
         return EXIT_OK
 
-    stages.append(run_frames(video, out_dir, None if no_points else args.points))
+    stages.append(run_frames(video, out_dir, args.range))
     emit({"ok": True, "out_dir": str(out_dir), "stages": stages,
-          "metadata": str(out_dir / "metadata.json")})
+          "index": str(out_dir / "context.md"), "next": NEXT_READ_CONTEXT})
     return EXIT_OK
 
 
@@ -373,10 +404,11 @@ def cmd_debug_report(args) -> int:
     out_dir = resolve_out(video, args.out)
     state = manifest.load_state(out_dir)
     manifest.require_done(state, "frames",
-                          f"analysis-video frames {video} ... 를 먼저 실행하세요")
+                          f"analysis-video frames {video} 를 먼저 실행하세요")
+    unit = resolve_run(out_dir, args.run)
     from . import debug_viz
-    png = debug_viz.render(out_dir, args.label or video.name)
-    emit({"ok": True, "out_dir": str(out_dir), "png": str(png)})
+    png = debug_viz.render(out_dir, args.label or f"{video.name} — {unit.name}", unit)
+    emit({"ok": True, "out_dir": str(out_dir), "run": unit.name, "png": str(png)})
     return EXIT_OK
 
 
@@ -402,12 +434,10 @@ def _add_stt_options(sp: argparse.ArgumentParser) -> None:
     sp.add_argument("--language", default=None, help="음성 언어 코드 (기본: 자동 감지)")
 
 
-def _add_points_options(sp: argparse.ArgumentParser, required: bool) -> None:
-    group = sp.add_mutually_exclusive_group(required=required)
-    group.add_argument("--points", type=Path, default=None,
-                       help="points.json — 텍스트 중요도 분석 결과 (호출 에이전트 작성)")
-    group.add_argument("--no-points", action="store_true",
-                       help="중요 시간대 없이 장면 전환만 추출 (명시적 생략)")
+def _add_range(sp: argparse.ArgumentParser) -> None:
+    sp.add_argument("--range", action="append", metavar="시작-끝", default=None,
+                    help="분석할 구간(초). 여러 번 주면 그만큼 독립 분석이 생긴다. "
+                         "겹쳐도 된다. 예: --range 120-300 --range 900-1200")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -417,10 +447,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--version", action="version", version=__version__)
     sub = p.add_subparsers(dest="command", required=True)
 
-    sp = sub.add_parser("analyze", help="오케스트레이터: split→transcribe→(points 대기)→frames")
+    sp = sub.add_parser("analyze", help="오케스트레이터: split→transcribe→frames (끝까지)")
     _add_video(sp)
     _add_stt_options(sp)
-    _add_points_options(sp, required=False)
+    _add_range(sp)
     sp.add_argument("--until", choices=["split", "transcribe", "frames"], default="frames")
     sp.set_defaults(func=cmd_analyze)
 
@@ -435,15 +465,17 @@ def build_parser() -> argparse.ArgumentParser:
                     help="완료된 전사를 무시하고 다시 전사 (모델 교체 시)")
     sp.set_defaults(func=cmd_transcribe)
 
-    sp = sub.add_parser("frames", help="프레임 검출·추출 (transcribe 선행 강제)")
+    sp = sub.add_parser("frames", help="프레임 검출·추출 (transcribe 선행 필요)")
     _add_video(sp)
-    _add_points_options(sp, required=True)
+    _add_range(sp)
     sp.set_defaults(func=cmd_frames)
 
     sp = sub.add_parser("frame", help="주문형 단일 프레임 추출 (frames 이후)")
     _add_video(sp)
     sp.add_argument("--at", type=float, required=True, help="추출 시각(초)")
     sp.add_argument("--reason", required=True, help="추출 사유 (provenance 필수)")
+    sp.add_argument("--run", default=None,
+                    help="분석 단위 이름 (단위가 여럿일 때 필수)")
     sp.set_defaults(func=cmd_frame)
 
     sp = sub.add_parser("status", help="스테이지 진행 상태")
@@ -459,6 +491,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("debug-report", help="디버그 그래프 생성 ([viz] extra 필요)")
     _add_video(sp)
     sp.add_argument("--label", default=None)
+    sp.add_argument("--run", default=None, help="분석 단위 이름 (여럿일 때 필수)")
     sp.set_defaults(func=cmd_debug_report)
 
     return p

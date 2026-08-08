@@ -6,7 +6,7 @@
 판독 줄에 나온다.
 
 레인(위→아래): 채택 프레임(검출 근거별 색, 복합 근거는 흰 테두리), 탈락 후보 ✗,
-주문 추출 ◆, importance-point ★, STT 세그먼트, GT 플래그, 그리고 아래 절반이
+주문 추출 ◆, 화면 경계 │, STT 세그먼트, GT 플래그, 그리고 아래 절반이
 anchor-diff 진단 — 전환 구간 음영 위에 anchor diff·순간 변화율·컷 면적을 각자의
 기준선과 함께 따로 쌓는다. 세 곡선은 읽는 방향이 다르다(anchor diff와 컷 면적은
 넘겨야 전환 시작, 순간 변화율은 내려가야 트리거) — 겹쳐 그리면 해독이 불가능해서
@@ -34,7 +34,7 @@ KIND_STYLE = {
     "frame": ((60, 160, 90), "■"),
     "rejected": ((187, 85, 85), "✗"),
     "requested": ((200, 140, 255), "◆"),
-    "point": ((230, 194, 41), "★"),
+    "screen": ((150, 200, 255), "│"),
     "segment": ((150, 150, 150), "▬"),
     "flag": ((255, 140, 0), "▲"),
     "transition": ((120, 120, 170), "▬"),
@@ -45,7 +45,7 @@ Y_RANGE = (0.0, 9.0)
 LANE_FRAMES = (7.95, 8.85)
 LANE_REJECTED = 7.5
 LANE_REQUESTED = 7.05
-LANE_POINTS = 6.6
+LANE_SCREENS = 6.6
 LANE_STT = (5.95, 6.3)
 LANE_FLAGS = 5.5
 LANE_ANCHOR = (3.4, 4.6)   # anchor diff — 기준선을 넘겨야 전환 시작(점진 누적)
@@ -55,7 +55,7 @@ DIFF_BAND = (LANE_AREA[0], LANE_ANCHOR[1])   # 전환 구간 음영이 덮는 �
 
 LANE_TICKS = [
     (sum(LANE_FRAMES) / 2, "프레임"), (LANE_REJECTED, "탈락"),
-    (LANE_REQUESTED, "주문"), (LANE_POINTS, "points"),
+    (LANE_REQUESTED, "주문"), (LANE_SCREENS, "화면"),
     (sum(LANE_STT) / 2, "STT"), (LANE_FLAGS, "플래그"),
     (sum(LANE_ANCHOR) / 2, "anchor diff"), (sum(LANE_RATE) / 2, "순간 변화율"),
     (sum(LANE_AREA) / 2, "컷 면적"),
@@ -70,10 +70,9 @@ SOURCE_COLORS = {
     "anchor-diff": (60, 160, 90),
     "anchor-diff-pre": (40, 200, 190),
     "adaptive": (70, 130, 205),
-    "importance-point": (230, 194, 41),
     "initial": (150, 150, 150),
 }
-SOURCE_ORDER = ["importance-point", "adaptive", "anchor-diff-pre", "anchor-diff", "initial"]
+SOURCE_ORDER = ["adaptive", "anchor-diff-pre", "anchor-diff", "initial"]
 
 MIN_SPAN = 2.0        # 최대 확대에서 보이는 시간 폭(초)
 ZOOM_STEPS = 1000     # 배율 슬라이더 해상도 (로그 눈금)
@@ -293,7 +292,6 @@ class TimelineWindow(ChildWindow):
         self._legend_head.setText("<br>".join(head))
 
         counts_by_kind = {k: len(self.session.mark_times(k)) for k, _, _ in MARK_KINDS}
-        counts_by_kind["point"] = len(st.point_times)   # ★는 원시 시각 자리에 찍힌다
         for kind, label, _d in MARK_KINDS:
             glyph = KIND_STYLE[kind][1]
             extra = ""
@@ -443,6 +441,17 @@ class TimelineWindow(ChildWindow):
             self._pw.addItem(pg.InfiniteLine(pos=y, angle=0, movable=False,
                                              pen=pg.mkPen((70, 70, 70), width=1)))
 
+        # 분석하지 않은 구간을 덮어 표시한다. 빈 구간이 "검출된 게 없음"인지
+        # "애초에 안 봤음"인지 구분이 안 되면 부분 분석 결과를 읽을 수 없다.
+        lo, hi = (st.window if st.window else [0.0, duration])
+        gaps = [(0.0, lo), (hi, duration)]
+        gaps = [(a, b) for a, b in gaps if b - a > duration * 1e-4]
+        if gaps:
+            self._pw.addItem(pg.BarGraphItem(
+                x0=[a for a, _ in gaps], x1=[b for _, b in gaps],
+                y0=Y_RANGE[0], y1=Y_RANGE[1],
+                brush=(20, 20, 20, 190), pen=None))
+
         if st.transitions:
             # 변화량 레인 전체를 덮는 음영 — 곡선이 이 구간 안에서 오르내리다
             # 안정되어 트리거된 것이 보인다
@@ -485,10 +494,10 @@ class TimelineWindow(ChildWindow):
                 y=[LANE_REQUESTED] * len(st.requested),
                 symbol="d", size=13, brush="#c88cff", pen=None))
 
-        if st.point_times:
+        if st.screens:
             self._pw.addItem(pg.ScatterPlotItem(
-                x=st.point_times, y=[LANE_POINTS] * len(st.point_times),
-                symbol="star", size=14, brush="#e6c229", pen=None))
+                x=[a for a, _ in st.screens], y=[LANE_SCREENS] * len(st.screens),
+                symbol="|", size=12, brush="#96c8ff", pen=None))
 
         if st.segments:
             self._pw.addItem(pg.BarGraphItem(

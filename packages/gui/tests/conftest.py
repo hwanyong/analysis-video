@@ -105,5 +105,5 @@ def analyzed(video_av, tmp_path) -> tuple[Path, Path]:
     out_dir = tmp_path / "out.analysis"
     assert cli.main(["split", str(video_av), "--out", str(out_dir)]) == 0
     assert cli.main(["transcribe", str(video_av), "--out", str(out_dir)]) == 0
-    assert cli.main(["frames", str(video_av), "--no-points", "--out", str(out_dir)]) == 0
+    assert cli.main(["frames", str(video_av), "--out", str(out_dir)]) == 0
     return video_av, out_dir

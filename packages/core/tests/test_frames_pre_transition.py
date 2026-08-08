@@ -22,7 +22,7 @@ def stub_pipeline(monkeypatch, tmp_path):
     """검출·추출·판정을 전부 대역으로 세우고 후보 생성만 남긴다."""
     captured = {}
 
-    def fake_cached_anchor(video_path, out_dir, ath, rth, cth):
+    def fake_cached_anchor(video_path, cache_dir, ath, rth, cth):
         return {
             "fps": 30.0, "n_frames": 12,
             "anchor_series": np.zeros(12), "rate_series": np.zeros(12),
@@ -63,7 +63,7 @@ def stub_pipeline(monkeypatch, tmp_path):
 
 def test_pre_transition_candidate_is_emitted(stub_pipeline, tmp_path):
     out = tmp_path / "x.analysis"
-    result = frames_mod.build_frames(tmp_path / "v.mkv", out, [])
+    result = frames_mod.build_frames(tmp_path / "v.mkv", out)
     by_source = {tuple(r["sources"]): r for r in result["records"]}
 
     assert ("anchor-diff-pre",) in by_source, "전환 직전 후보가 없다"
@@ -80,7 +80,7 @@ def test_pre_candidate_skipped_when_transition_starts_at_first_frame(
         monkeypatch, stub_pipeline, tmp_path):
     """transition_start_idx가 0이면 '직전'이 없다 — 음수 인덱스로 끝 프레임을
     집어오면 안 된다(파이썬 음수 인덱싱의 조용한 오동작)."""
-    def fake_cached_anchor(video_path, out_dir, ath, rth, cth):
+    def fake_cached_anchor(video_path, cache_dir, ath, rth, cth):
         return {
             "fps": 30.0, "n_frames": 12,
             "anchor_series": np.zeros(12), "rate_series": np.zeros(12),
@@ -92,7 +92,7 @@ def test_pre_candidate_skipped_when_transition_starts_at_first_frame(
         }
     monkeypatch.setattr(frames_mod, "_cached_anchor", fake_cached_anchor)
 
-    result = frames_mod.build_frames(tmp_path / "v.mkv", tmp_path / "y.analysis", [])
+    result = frames_mod.build_frames(tmp_path / "v.mkv", tmp_path / "y.analysis")
     sources = [tuple(r["sources"]) for r in result["records"]]
     assert ("anchor-diff-pre",) not in sources
 
@@ -107,14 +107,14 @@ def test_pre_candidate_dropped_when_screen_did_not_change(
     monkeypatch.setattr(frames_mod.media, "extract_gray_array",
                         lambda p, t, w=200, h=112: same)
 
-    result = frames_mod.build_frames(tmp_path / "v.mkv", tmp_path / "s.analysis", [])
+    result = frames_mod.build_frames(tmp_path / "v.mkv", tmp_path / "s.analysis")
     sources = [tuple(r["sources"]) for r in result["records"]]
     assert ("anchor-diff-pre",) not in sources, "안 바뀐 화면의 직전 후보는 생략"
     assert ("anchor-diff",) in sources, "트리거는 그대로 남는다"
 
 
 def test_pair_threshold_is_recorded_in_params(stub_pipeline, tmp_path):
-    r = frames_mod.build_frames(tmp_path / "v.mkv", tmp_path / "p.analysis", [])
+    r = frames_mod.build_frames(tmp_path / "v.mkv", tmp_path / "p.analysis")
     assert r["params"]["pair_dup_threshold"] == 0.93
 
 

@@ -1,7 +1,7 @@
 """대사 싱크 창 — Apple Music 가사 싱크 방식.
 
 현재 재생 위치의 세그먼트를 하이라이트하고 자동 스크롤(가운데 정렬),
-클릭하면 그 시점으로 seek. importance-point의 트리거 대사에는 ★ 표시.
+클릭하면 그 시점으로 seek.
 """
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QFont

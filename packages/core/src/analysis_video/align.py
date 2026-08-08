@@ -19,22 +19,27 @@
 from bisect import bisect_right
 
 
-def screen_periods(anchor_events: list[dict], duration: float) -> list[tuple[float, float]]:
+def screen_periods(anchor_events: list[dict], duration: float,
+                   window: tuple[float, float] | None = None) -> list[tuple[float, float]]:
     """화면이 떠 있던 구간들. 전환 자체(시작~트리거, 실측 중앙값 1프레임)는
-    어느 화면에도 속하지 않는 '바뀌는 중'이므로 다음 화면 쪽에 흡수된다."""
+    어느 화면에도 속하지 않는 '바뀌는 중'이므로 다음 화면 쪽에 흡수된다.
+
+    window를 주면 그 구간으로 잘라낸다 — 부분 분석에서 첫 화면은 구간 시작에서
+    시작하고(그 화면의 진짜 등장은 구간 이전이다) 마지막은 구간 끝에서 닫힌다."""
+    lo, hi = window if window is not None else (0.0, duration)
     periods = []
-    start = 0.0
+    start = lo
     for e in anchor_events:
         end = e.get("transition_start_time")
         trigger = e.get("trigger_time")
-        if end is None or trigger is None:
+        if end is None or trigger is None or not lo <= trigger <= hi:
             continue
         if end > start:
-            periods.append((start, end))
+            periods.append((start, min(end, hi)))
         start = trigger
-    if duration > start:
-        periods.append((start, duration))
-    return periods or [(0.0, duration)]
+    if hi > start:
+        periods.append((start, hi))
+    return periods or [(lo, hi)]
 
 
 def assign_segments(segments: list[dict],
@@ -61,7 +66,9 @@ def assign_segments(segments: list[dict],
 
 
 def attach_dialogue(records: list[dict], segments: list[dict], duration: float,
-                    anchor_events: list[dict] | None = None) -> list[tuple[float, float]]:
+                    anchor_events: list[dict] | None = None,
+                    window: tuple[float, float] | None = None
+                    ) -> list[tuple[float, float]]:
     """모든 레코드에 소속 화면을 매긴다 — 탈락한 것도 포함.
 
     탈락 레코드에도 화면을 매기는 이유: 어떤 화면은 후보가 **전부** 탈락한다
@@ -69,9 +76,12 @@ def attach_dialogue(records: list[dict], segments: list[dict], duration: float,
     그동안의 대사가 통째로 사라진다 — 실측 유실 video1 64%, video2 33%,
     video3 14%. 중복 병합이면 그 화면을 대표하는 이미지가 dup_of에 살아 있으므로
     소비자가 되찾을 수 있어야 한다."""
-    periods = screen_periods(anchor_events or [], duration)
+    periods = screen_periods(anchor_events or [], duration, window)
     starts = [p[0] for p in periods]
-    said = assign_segments(segments, periods)
+    # 구간 밖의 대사는 이 분석의 것이 아니다 — 배정 대상에서 제외한다
+    lo, hi = periods[0][0], periods[-1][1]
+    scoped = [s for s in segments if s["end"] > lo and s["start"] < hi]
+    said = assign_segments(scoped, periods)
 
     for r in records:
         # 프레임이 속한 화면 = 시작 시각이 프레임 시각을 넘지 않는 마지막 화면
@@ -82,11 +92,6 @@ def attach_dialogue(records: list[dict], segments: list[dict], duration: float,
         if r["status"] != "accepted":
             continue  # 대사는 채택본에만 — 탈락 레코드까지 실으면 metadata가 배로 커진다
         r["dialogue"] = said.get(k, [])
-        if r.get("point_times"):
-            # importance-point가 병합된 프레임: 어떤 대사가 트리거였는지 별도 기록
-            triggers = [find_segment_at(segments, t) for t in r["point_times"]]
-            r["trigger_dialogue"] = [t for i, t in enumerate(triggers)
-                                     if t is not None and t not in triggers[:i]]
     return periods
 
 

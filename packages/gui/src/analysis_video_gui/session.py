@@ -49,7 +49,7 @@ DEFAULT_OPEN = ["player", "frame_sync", "dialogue", "timeline"]
 MARK_KINDS = [
     ("frame", "채택 프레임", True),
     ("rejected", "탈락 후보", True),
-    ("point", "importance-point", True),
+    ("screen", "화면 시작", False),
     ("flag", "GT 플래그", True),
     ("requested", "주문 추출", True),
     ("transition", "전환 구간", False),
@@ -64,11 +64,13 @@ class Session(QObject):
     traverseChanged = Signal()           # 순회 대상 종류가 바뀜
     markJumped = Signal(str, str)        # (종류 키, 사람이 읽을 설명)
 
-    def __init__(self, video_path: Path, out_dir: Path):
+    unitChanged = Signal(str)            # 분석 단위 전환
+
+    def __init__(self, video_path: Path, out_dir: Path, unit: str | None = None):
         super().__init__()
         self.video_path = video_path
         self.out_dir = out_dir
-        self.store = Store(video_path, out_dir)
+        self.store = Store(video_path, out_dir, unit)
         self.engine = PlayerEngine(video_path, self.store.duration)
         self.flags = FlagStore(out_dir)
         self.settings = QSettings("analysis-video", "gui")
@@ -114,13 +116,7 @@ class Session(QObject):
         times = self.mark_times(kind)
         idx = times.index(t) + 1 if t in times else 0
         desc = f"{MARK_LABEL.get(kind, kind)} {idx}/{len(times)} · t={t:.2f}"
-        if kind == "point":
-            # 착지는 담당 프레임이므로 어느 point가 데려왔는지 밝혀 준다 —
-            # 병합된 point는 원시 시각이 수십 초 떨어져 있을 수 있다
-            raws = [p for p, o in self.store.point_owner.items() if o == t]
-            if raws:
-                desc += " ← point " + ", ".join(f"{p:.2f}" for p in sorted(raws))
-        elif kind == "rejected":
+        if kind == "rejected":
             dup = self.store.dup_target(t)
             if dup is not None:
                 desc += f" · {dup:.2f}의 중복 판정 (D로 원본 보기)"
@@ -172,6 +168,12 @@ class Session(QObject):
                 self.open_window(wid)
 
     # ---------- 상태 ----------
+
+    def set_unit(self, name: str) -> None:
+        """분석 단위 전환 — 데이터만 갈아끼우면 창들이 store.reloaded로 따라온다.
+        영상·클록·GT 플래그는 영상의 것이므로 그대로 둔다."""
+        self.store.set_unit(name)
+        self.unitChanged.emit(name)
 
     def toggle_rejected(self) -> None:
         self.show_rejected = not self.show_rejected

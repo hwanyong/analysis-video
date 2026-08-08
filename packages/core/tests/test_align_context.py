@@ -120,13 +120,14 @@ def test_context_groups_images_by_screen():
             {"time": 10.1, "image": "frames/c.jpg", "screen": 1,
              "interval": [10.1, 30.0], "dialogue": []},
         ],
+        "transcript": {"segments": [_seg(0.0, 8.0, "첫 화면")]},
     }
     doc = context.render(metadata, "lecture.mkv")
     assert doc.count("## ") == 2, "화면 단위여야 한다 — 프레임 3장에 화면 2개"
     # screen 키가 없어도 interval만으로 묶여야 한다 (폴백이 묶기를 무력화한 사고)
-    stripped = {"source": metadata["source"],
-                "frames": [{k: v for k, v in f.items() if k != "screen"}
-                           for f in metadata["frames"]]}
+    stripped = {k: v for k, v in metadata.items() if k != "screens"}
+    stripped["frames"] = [{k: v for k, v in f.items() if k != "screen"}
+                          for f in metadata["frames"]]
     assert context.render(stripped, "lecture.mkv").count("## ") == 2
     assert doc.count("![](") == 3, "이미지는 전부 실린다"
     assert doc.count("첫 화면") == 1, "같은 대사가 두 번 실리면 안 된다"

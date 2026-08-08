@@ -80,7 +80,7 @@ class GalleryWindow(ChildWindow):
                 self._timer.stop()
                 break
             f, is_rejected = self._queue.pop(0)
-            star = "★" if "importance-point" in f["sources"] else ""
+            star = "◐" if "anchor-diff-pre" in f["sources"] else ""
             if is_rejected:
                 caption = f"✗{star} {fmt_time(f['time'])}\n{f['reject_reason']}"
             else:

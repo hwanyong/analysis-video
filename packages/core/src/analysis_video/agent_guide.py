@@ -8,56 +8,84 @@ Cline, Antigravity 등)이므로 최대 호환 언어로 작성한다. 사용법
 GUIDE = """\
 # analysis-video — Agent Guide
 
-Converts a slide-based lecture video into AI-consumable context:
-scene frame images + dialogue timeline + a compact `context.md` for you to read.
+Turns a lecture video into something you can actually read: one section per
+on-screen state, with its image(s), the seconds it was displayed, and what was
+said during it. That file is `context.md`. Start there.
 
-## Pipeline contract (STRICT ORDER — enforced with exit code 3)
+## Pipeline
 
 ```
-1. analysis-video analyze <video>
-     Runs split + transcribe, then STOPS. The envelope includes `duration`
-     (seconds) and the transcript path.
-2. YOU (the calling agent) read transcript.json and select the moments that
-   matter based on what is being SAID. Write points.json (schema below).
-   This "text importance analysis" step is deliberately NOT in the tool.
-3. analysis-video frames <video> --points points.json
-     Scene-change detection + captures at your points + quality gates.
-     Writes context.md (for you) and metadata.json (full record).
-     Refuses to run before transcribe.
-4. Read context.md. Each section is one screen: {period, image(s), dialogue}.
+analysis-video analyze <video>
 ```
 
-If no moment is important, you must opt out explicitly: `frames <video> --no-points`.
+Runs everything (split → transcribe → detect → capture) and stops when
+`context.md` is ready. No step in the middle is yours.
 
-## points.json schema
+Frame extraction is driven by **one criterion: how much the picture changed**.
+You do not pre-select "important moments" — earlier versions had you write a
+points.json from the transcript, but choosing timestamps from text alone, before
+seeing any image, produced a second and incompatible notion of "important frame".
+Every on-screen state is captured anyway, so read `context.md` first and then ask
+for extra frames if you still need them (see `frame --at` below).
 
-```json
-{
-  "points": [
-    {"time": 421.8, "reason": "instructor says this will be on the exam"}
-  ]
-}
+## Analysing only part of a video
+
+```
+analysis-video analyze <video> --range 120-300 --range 900-1200
 ```
 
-- `time`: seconds. Must be within `[0, duration]` — take `duration` from the
-  transcribe/analyze envelope (out-of-range = exit 2).
-- `reason`: REQUIRED non-empty provenance — why this moment matters.
-  It is preserved into metadata.json (`frames[].reasons`; if the capture was
-  gated out, under `rejected[].reasons` — never silently dropped).
+Each `--range` (seconds) produces a **separate, self-contained analysis** under
+`runs/`. They are independent: ranges may overlap, and where they do, the same
+timestamp can be grouped into different screens with different images in each
+run. That is not a contradiction — pick one run and read it consistently.
+`runs/index.json` and the top-level `context.md` list what exists.
+
+Without `--range` you get a single run named `full`.
+
+## Reading context.md
+
+```markdown
+## 63.13-87.73s
+![](frames/scene_020_t0063.13.jpg)
+![](frames/scene_021_t0087.70.jpg)
+N1 없이 커지면 BN이라는값도 당연히 1 없이 커지게 됩니다. ...
+```
+
+- One section = one screen, or several screens that went by while a single
+  sentence was being spoken.
+- Several images = the same screen at different moments: as it appeared, and as
+  it looked just before it changed. On handwriting videos that second image is
+  the completed board — usually the one you want.
+- Every sentence of the transcript appears exactly once across all sections.
+  Nothing is duplicated, nothing is dropped.
+- `(그림 없음 ...)` means the screen was too dark to capture; the dialogue is
+  still there. `(앞 화면과 같은 그림 ...)` means the screen was identical to an
+  earlier one, so its image is reused.
+
+## Extra frames on demand
+
+```
+analysis-video frame <video> --at 421.8 --reason "why this moment matters"
+```
+
+Use it after reading `context.md`, when you want a frame at a moment the change
+detector had no reason to capture. `--reason` is required and is kept in the
+record. Add `--run <name>` when several runs exist. The image lands in
+`runs/<name>/requested/` and is merged into that run's `metadata.json`.
 
 ## Commands
 
 | command | effect |
 |---|---|
-| `analyze <video>` | split + transcribe, stop for points (add `--points P.json` to run everything) |
+| `analyze <video> [--range A-B ...]` | everything, end to end |
 | `split <video>` | audio.wav + video.mkv |
-| `transcribe <video> [--model tiny..large,turbo] [--language ko] [--force]` | transcript.json; `--force` re-runs (e.g. model change) |
-| `frames <video> --points P.json \\| --no-points` | detection + capture + context.md |
-| `frame <video> --at 421.8 --reason "..."` | one extra on-demand frame after the fact (idempotent per at+reason) |
+| `transcribe <video> [--model tiny..large,turbo] [--language ko] [--force]` | transcript.json |
+| `frames <video> [--range A-B ...]` | detection + capture + context.md |
+| `frame <video> --at 421.8 --reason "..." [--run NAME]` | one extra frame (idempotent per at+reason) |
 | `status <video>` | stage completion state |
 | `doctor` | environment / STT backend report (exit 4 if no backend usable) |
 | `agent-guide` | this document |
-| `debug-report <video> [--label L]` | render analysis graph PNG (needs `[viz]` extra) |
+| `debug-report <video> [--run NAME] [--label L]` | detection graph PNG (needs `[viz]` extra) |
 
 - `--out DIR` is accepted by every command that takes `<video>`
   (default: `<video>.analysis/` next to the video). `doctor`/`agent-guide` take no paths.
@@ -78,12 +106,11 @@ If no moment is important, you must opt out explicitly: `frames <video> --no-poi
 ## Timeouts / resume
 
 Every stage is resumable: if your harness kills a run, re-invoke the SAME
-command — completed stages are skipped via state.json. `frames` recomputes
-deterministically, but its detector passes are cached (detect_anchor.npz,
-detect_adaptive.json), so a re-invocation resumes from extraction.
-NOTE: on long videos (30+ min) a cold `frames` pass can take several minutes —
-prefer a harness timeout of 10 minutes, or re-invoke until it completes
-(each retry makes progress thanks to the caches).
+command — completed stages are skipped via state.json. Detection is cached per
+video (detect_anchor.npz, detect_adaptive.json) and shared by every run, so
+adding a `--range` later does not re-scan the video.
+NOTE: on long videos (30+ min) a cold pass can take several minutes — prefer a
+harness timeout of 10 minutes, or re-invoke until it completes.
 
 ## Output directory layout
 
@@ -92,24 +119,20 @@ prefer a harness timeout of 10 minutes, or re-invoke until it completes
 ├── state.json            # stage progress (resume)
 ├── audio.wav  video.mkv  # split resources (audio absent if video is silent)
 ├── transcript.json       # full STT: text, segments, word timestamps
-├── points.json           # (written by YOU, if you keep it here)
-├── frames/               # accepted frame images (full resolution)
-│   └── rejected/         # gated-out frames, kept for audit (reasons in metadata)
-├── requested/            # frames from `frame --at` (+ requests.json ledger)
-├── detect_anchor.npz     # detection time-series cache (debug/GUI, resume)
-├── detect_adaptive.json  # adaptive detector cache (resume)
-├── frames.json           # every candidate with accept/reject verdict
-├── debug_graph.png       # from `debug-report` (optional)
-├── context.md            # ★ READ THIS. One section per screen: the period it was
-│                         #   on display, its image(s), and the dialogue spoken then.
-│                         #   ~17% the tokens of metadata.json, same information for
-│                         #   your purpose. A screen may hold several images (the
-│                         #   fresh state when it appeared, the completed state just
-│                         #   before it changed) — they share one dialogue block.
-└── metadata.json         # FULL RECORD, for auditing the detector — not for reading
-                          #   end to end. frames[{time, image, sources, screen,
-                          #   interval, dialogue, reasons?, point_times?,
-                          #   trigger_dialogue?}] + rejected[] (why each candidate
-                          #   was dropped) + requested[] + transcript + params
+├── detect_anchor.npz     # detection time-series cache, shared by all runs
+├── detect_adaptive.json  # adaptive detector cache, shared by all runs
+├── context.md            # ★ INDEX: which runs exist, and what each covers
+└── runs/
+    ├── index.json        # same list, machine-readable
+    └── <name>/           # "full", or e.g. "00120_0-00300_0"
+        ├── context.md    # ★ READ THIS — screens, images, dialogue
+        ├── frames/       # captured images (rejected/ keeps gated-out ones)
+        ├── requested/    # frames from `frame --at` (+ requests.json ledger)
+        ├── frames.json   # every candidate with accept/reject verdict
+        └── metadata.json # FULL RECORD, for auditing the detector — not for
+                          #   reading end to end. window + screens[] +
+                          #   frames[{time, image, sources, screen, interval,
+                          #   dialogue}] + rejected[] (why each was dropped)
+                          #   + requested[] + transcript + params
 ```
 """

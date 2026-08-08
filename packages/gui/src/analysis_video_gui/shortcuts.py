@@ -17,14 +17,14 @@ SHORTCUT_HELP = """\
 [재생]                              [마크로 정확히 이동]
 Space / K      재생 · 일시정지          ↓ / ↑      다음/이전 마크 (켜 둔 종류 전부)
 ← / →          5초 뒤로/앞으로          N / ⇧N     다음/이전 채택 프레임
-J / L          10초 뒤로/앞으로         P / ⇧P     다음/이전 importance-point
-, / .          프레임 단위 스텝          G / ⇧G     다음/이전 GT 플래그
-⇧, / ⇧.        배속 내림/올림           D          이 탈락이 '무엇의 중복'인지 원본으로
-0~9            0~90% 지점으로 점프      R          탈락 후보 숨김/표시
-Home/End       처음/끝                  F          GT 플래그 추가/제거(토글)
-M              음소거                   ?          이 도움말
+J / L          10초 뒤로/앞으로         G / ⇧G     다음/이전 GT 플래그
+, / .          프레임 단위 스텝          D          이 탈락이 '무엇의 중복'인지 원본으로
+⇧, / ⇧.        배속 내림/올림           R          탈락 후보 숨김/표시
+0~9            0~90% 지점으로 점프      F          GT 플래그 추가/제거(토글)
+Home/End       처음/끝                  ?          이 도움말
+M              음소거
 
-↓/↑가 훑는 종류는 타임라인 범례의 체크박스로 고릅니다(STT 세그먼트는 581건이라
+↓/↑가 훑는 종류는 타임라인 범례의 체크박스로 고릅니다(STT 세그먼트는 592건이라
 기본 제외). 타임라인 클릭도 가까운 마크에 달라붙고, 점프하면 화면 밖으로 나간
 재생 커서를 뷰포트가 따라갑니다.
 
@@ -131,9 +131,6 @@ class ShortcutRouter(QObject):
             return True
         if key == Qt.Key.Key_N:
             s.jump_mark(forward=not shift, kinds=["frame"])
-            return True
-        if key == Qt.Key.Key_P:
-            s.jump_mark(forward=not shift, kinds=["point"])
             return True
         if key == Qt.Key.Key_G:
             s.jump_mark(forward=not shift, kinds=["flag"])

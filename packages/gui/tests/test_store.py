@@ -13,49 +13,30 @@ def _write(out_dir, frames, rejected, duration=100.0):
     }), encoding="utf-8")
 
 
-def test_point_times_are_deduped(qapp, tmp_path):
-    """같은 importance-point가 탈락 후보와 병합 대상 채택 프레임 양쪽에 붙는다 —
-    중복을 남기면 ★가 겹치고 P 내비게이션이 한자리에 두 번 멈춘다."""
-    out = tmp_path / "x.analysis"
-    _write(out,
-           frames=[{"time": 10.0, "interval": [10.0, 50.0], "sources": ["anchor-diff"],
-                    "point_times": [42.0]}],
-           rejected=[{"time": 42.3, "sources": ["importance-point"],
-                      "reject_reason": "phash-dup(of=10.0)", "point_times": [42.0]}])
-    st = Store(tmp_path / "nonexistent.mkv", out)
-    assert st.point_times == [42.0], "같은 point가 두 번 세어지면 안 된다"
+def test_units_are_listed_and_switchable(qapp, analyzed):
+    """분석 단위 전환은 out_dir를 갈아끼우고 reload하는 것 — 창들은 reloaded
+    신호로 알아서 따라온다. 재생 클록·영상은 영상의 것이므로 건드리지 않는다."""
+    video, root = analyzed
+    st = Store(video, root)
+    names = [e["name"] for e in st.available_units()]
+    assert names == ["full"], "구간을 안 주면 단위는 full 하나"
+    assert st.unit == "full"
+    assert st.out_dir == root / "runs" / "full"
+    assert st.metadata, "단위 디렉터리에서 metadata를 읽어야 한다"
+
+    seen = []
+    st.reloaded.connect(lambda: seen.append(st.unit))
+    st.set_unit("full")
+    assert seen == [], "같은 단위면 재로드하지 않는다"
 
 
-def test_point_lands_on_the_frame_it_produced(qapp, tmp_path):
-    """point 원시 시각으로 이동하면 화면에는 직전 구간 이미지가 뜬다 — 안정화(+0.3초)와
-    중복 병합 때문. 착지는 그 point를 품은 프레임이어야 확인이 성립한다."""
-    out = tmp_path / "p.analysis"
-    _write(out,
-           frames=[{"time": 10.0, "interval": [10.0, 244.4], "sources": ["anchor-diff"]},
-                   {"time": 244.4, "interval": [244.4, 900.0],
-                    "sources": ["importance-point"], "point_times": [244.1]},
-                   {"time": 963.13, "interval": [963.13, 1600.0],
-                    "sources": ["anchor-diff", "importance-point"],
-                    "point_times": [1069.0]}],
-           rejected=[{"time": 1069.3, "sources": ["importance-point"],
-                      "reject_reason": "phash-dup(of=963.13)", "dup_of": 963.13,
-                      "point_times": [1069.0]}],
-           duration=1600.0)
-    st = Store(tmp_path / "nonexistent.mkv", out)
-
-    assert st.point_times == [244.1, 1069.0], "★는 원시 시각 자리에 찍힌다"
-    assert st.point_landings == [244.4, 963.13], "착지는 담당 프레임"
-    assert st.point_owner[1069.0] == 963.13, "병합된 point는 승계 대상이 담당"
-
-    # 순회는 착지 시각 위에서 — 원시 시각으로 순회하면 착지 후 뒤로 가기가
-    # 방금 온 자리를 다시 가리켜 제자리에 갇힌다
-    assert st.next_point_time(0.0, forward=True) == 244.4
-    assert st.next_point_time(244.4, forward=True) == 963.13
-    assert st.next_point_time(963.13, forward=False) == 244.4
-    assert st.next_point_time(244.4, forward=False) is None
-
-    assert st.dup_target(1069.3) == 963.13, "탈락 → 중복 원본 링크"
-    assert st.dup_target(500.0) is None
+def test_window_and_screens_are_exposed(qapp, analyzed):
+    """구간과 화면 목록이 없으면 GUI가 '빈 구간'과 '안 본 구간'을 구분할 수 없다."""
+    video, root = analyzed
+    st = Store(video, root)
+    assert st.window[0] == 0.0 and st.window[1] > 0
+    assert st.screens, "screens[]가 비면 화면 레인을 그릴 수 없다"
+    assert st.mark_times("screen") == [a for a, _ in st.screens]
 
 
 def test_series_is_loaded_from_real_npz(qapp, analyzed):

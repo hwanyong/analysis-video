@@ -18,10 +18,14 @@ from analysis_video import media
 class Store(QObject):
     reloaded = Signal()
 
-    def __init__(self, video_path: Path, out_dir: Path, parent=None):
+    def __init__(self, video_path: Path, out_dir: Path, unit: str | None = None,
+                 parent=None):
         super().__init__(parent)
         self.video_path = video_path
-        self.out_dir = out_dir
+        self.root = out_dir            # 영상 단위 — 전사·검출 캐시가 여기 있다
+        self.unit = unit or self._first_unit()
+        self.out_dir = self.root / "runs" / self.unit if self.unit else self.root
+        self.window: list[float] = [0.0, 0.0]
 
         self.metadata: dict = {}
         self.frames: list[dict] = []       # 채택 프레임 (시간순)
@@ -32,9 +36,7 @@ class Store(QObject):
         self.series: dict | None = None
         self.transitions: list[tuple[float, float]] = []  # (전환 시작, 트리거) 구간
         self.duration: float = 0.0
-        self.point_times: list[float] = []        # 원시 point 시각 (★를 찍는 자리)
-        self.point_landings: list[float] = []     # 그 point들이 만든 프레임 시각
-        self.point_owner: dict[float, float] = {}
+        self.screens: list[list[float]] = []
 
         self._debounce = QTimer(self)
         self._debounce.setSingleShot(True)
@@ -56,8 +58,8 @@ class Store(QObject):
         """감시 경로를 매번 다시 건다 — out_dir가 아직 없을 수도 있고(첫 분석 전),
         frames 재실행이 디렉토리를 지웠다 다시 만들면 기존 감시가 끊기기 때문."""
         watched = set(self._watcher.directories()) | set(self._watcher.files())
-        targets = [self.out_dir.parent, self.out_dir,
-                   self.out_dir / "metadata.json", self.out_dir / "transcript.json"]
+        targets = [self.root, self.out_dir.parent, self.out_dir,
+                   self.out_dir / "metadata.json", self.root / "transcript.json"]
         for p in targets:
             if p.exists() and str(p) not in watched:
                 self._watcher.addPath(str(p))
@@ -69,7 +71,7 @@ class Store(QObject):
         self.frames = self.metadata.get("frames", [])
         self.rejected = self.metadata.get("rejected", [])
         self.requested = self.metadata.get("requested", [])
-        transcript = self._read_json("transcript.json") or {}
+        transcript = self._read_json("transcript.json", root=True) or {}
         self.segments = transcript.get("segments",
                                        self.metadata.get("transcript", {}).get("segments", []))
         self.duration = float(self.metadata.get("source", {}).get("duration", 0.0))
@@ -79,7 +81,9 @@ class Store(QObject):
             except Exception:
                 self.duration = 0.0
 
-        npz = self.out_dir / "detect_anchor.npz"
+        self.window = self.metadata.get("window", [0.0, self.duration])
+        self.screens = self.metadata.get("screens", [])
+        npz = self.root / "detect_anchor.npz"
         self.series = None
         self.transitions = []
         if npz.exists():
@@ -105,38 +109,34 @@ class Store(QObject):
 
         self._frame_starts = [f["time"] for f in self.frames]
         self._seg_starts = [s["start"] for s in self.segments]
-        # 같은 importance-point가 탈락 후보와 그것이 병합된 채택 프레임 양쪽에 붙는다
-        # (예: point 1069.0 → 채택 963.13 + 탈락 1069.3 phash-dup). 중복을 남기면
-        # ★가 겹쳐 그려지고 P 내비게이션이 같은 지점에 두 번 멈춘다.
-        self.point_times = sorted({
-            round(t, 2) for f in self.frames + self.rejected
-            for t in f.get("point_times", [])})
-        self._build_point_owners()
         self.reloaded.emit()
 
-    def _build_point_owners(self) -> None:
-        """point 원시 시각 → 그 point가 실제로 만들어낸 채택 프레임의 시각.
+    # ---------- 분석 단위 ----------
 
-        point는 안정화 때문에 +0.3초 뒤에서 캡처되고(frames.py), 중복 병합되면
-        수십 초 떨어진 프레임으로 승계된다. 그래서 point 원시 시각으로 이동하면
-        화면에는 **직전 구간의 이미지**가 뜬다 — video3 실측 5/5 전부 빗나갔다.
-        착지는 담당 프레임으로 해야 "이 대사 때문에 이 장면"이 확인된다.
-        """
-        owner: dict[float, float] = {}
-        for f in self.frames:
-            for t in f.get("point_times", []):
-                owner.setdefault(round(t, 2), f["time"])
-        for r in self.rejected:
-            for t in r.get("point_times", []):
-                # 탈락에만 붙은 point는 병합 대상으로, 그것도 없으면 제자리
-                owner.setdefault(round(t, 2), r.get("dup_of", r["time"]))
-        self.point_owner = owner
-        # 순회는 착지 시각 위에서 해야 한다 — 원시 시각으로 순회하면 착지 후
-        # 뒤로 가기가 방금 온 자리를 다시 가리켜 제자리에 갇힌다
-        self.point_landings = sorted(set(owner.values()))
+    def available_units(self) -> list[dict]:
+        idx = self.root / "runs" / "index.json"
+        if not idx.exists():
+            return []
+        try:
+            return json.loads(idx.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return []
 
-    def _read_json(self, name: str):
-        p = self.out_dir / name
+    def _first_unit(self) -> str | None:
+        entries = self.available_units()
+        return entries[0]["name"] if entries else None
+
+    def set_unit(self, name: str) -> None:
+        """다른 분석 단위로 갈아탄다 — 창들은 reloaded 신호로 알아서 따라온다."""
+        if name == self.unit:
+            return
+        self.unit = name
+        self.out_dir = self.root / "runs" / name
+        self._rearm_watcher()
+        self.reload()
+
+    def _read_json(self, name: str, root: bool = False):
+        p = (self.root if root else self.out_dir) / name
         if not p.exists():
             return None
         try:
@@ -187,16 +187,13 @@ class Store(QObject):
     def next_frame_time(self, t: float, forward: bool = True) -> float | None:
         return self._jump(self._frame_starts, t, forward)
 
-    def next_point_time(self, t: float, forward: bool = True) -> float | None:
-        return self._jump(self.point_landings, t, forward)
-
     def mark_times(self, kind: str) -> list[float]:
         """마크 종류별 착지 시각 목록 (시간 오름차순). 순회의 단일 원천."""
         return {
             "frame": self._frame_starts,
             "rejected": sorted(r["time"] for r in self.rejected),
-            "point": self.point_landings,
             "requested": sorted(r["time"] for r in self.requested),
+            "screen": [a for a, _ in self.screens],
             "transition": sorted(a for a, _ in self.transitions),
             "segment": self._seg_starts,
         }.get(kind, [])

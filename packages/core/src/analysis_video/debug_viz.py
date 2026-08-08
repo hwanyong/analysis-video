@@ -43,10 +43,12 @@ def _load_matplotlib():
     return matplotlib
 
 
-def render(out_dir: Path, title: str) -> Path:
+def render(out_dir: Path, title: str, unit_dir: Path | None = None) -> Path:
+    """out_dir = 영상 단위(검출 캐시·전사가 있는 곳), unit_dir = 분석 단위."""
     _load_matplotlib()
     import matplotlib.pyplot as plt
 
+    unit = unit_dir if unit_dir is not None else out_dir
     data = np.load(out_dir / "detect_anchor.npz")
     anchor_s, rate, area = data["anchor_series"], data["rate_series"], data["area_series"]
     fps = float(data["fps"])
@@ -54,7 +56,7 @@ def render(out_dir: Path, title: str) -> Path:
     rate_threshold = float(data["rate_threshold"])
     cut_area_threshold = float(data["cut_area_threshold"])
 
-    frames_info = json.loads((out_dir / "frames.json").read_text(encoding="utf-8"))
+    frames_info = json.loads((unit / "frames.json").read_text(encoding="utf-8"))
     transcript = json.loads((out_dir / "transcript.json").read_text(encoding="utf-8"))
     records = frames_info["records"]
     events = frames_info["anchor_events"]
@@ -85,15 +87,14 @@ def render(out_dir: Path, title: str) -> Path:
     for i, r in enumerate(records):
         idx = min(int(np.searchsorted(times, r["time"])), n - 1)
         color = STATUS_COLOR[r["status"]]
-        marker = "*" if "importance-point" in r["sources"] else "^"
-        ms = 11 if marker == "*" else 8
-        ax_v.plot(r["time"], anchor_s[idx], marker=marker, color=color, ms=ms, zorder=5)
+        marker = "s" if "anchor-diff-pre" in r["sources"] else "^"
+        ax_v.plot(r["time"], anchor_s[idx], marker=marker, color=color, ms=8, zorder=5)
         ax_v.text(r["time"], anchor_s[idx], f" {i}", fontsize=6, va="bottom", color=color)
 
     ax_v.plot([], [], marker="v", color="blue", ms=7, lw=0, label="앵커(기준커서)")
     ax_v.plot([], [], marker="^", color="green", ms=8, lw=0, label="채택 프레임")
     ax_v.plot([], [], marker="^", color="gray", ms=8, lw=0, label="탈락 프레임(사유는 frames.json)")
-    ax_v.plot([], [], marker="*", color="green", ms=11, lw=0, label="importance-point")
+    ax_v.plot([], [], marker="s", color="green", ms=8, lw=0, label="전환 직전(완성 화면)")
     ax_v.axvspan(0, 0, color="orange", alpha=0.15, label="전환구간")
     n_acc = sum(1 for r in records if r["status"] == "accepted")
     ax_v.set_ylabel("anchor diff (앵커 대비)")
@@ -115,16 +116,15 @@ def render(out_dir: Path, title: str) -> Path:
     ax_c.set_ylabel("컷 면적\n(변한 픽셀 비율)")
     ax_c.legend(loc="upper right", fontsize=8)
 
-    # ---- 하단: STT 단어 밀도 + importance-point ----
+    # ---- 하단: STT 단어 밀도 + 채택 시각 ----
     words = transcript.get("words", [])
     if words:
         ax_a.eventplot([w["start"] for w in words], lineoffsets=0.5, linelengths=0.8,
                        color="#888888", lw=0.4, label=f"STT 단어({len(words)}개)")
-    point_times = [t for r in records for t in r.get("point_times", [])]
-    for t in point_times:
-        ax_a.axvline(t, color="crimson", lw=1.2, alpha=0.8)
-    if point_times:
-        ax_a.plot([], [], color="crimson", lw=1.2, label=f"importance-point({len(point_times)}개)")
+    for r in records:
+        if r["status"] == "accepted":
+            ax_a.axvline(r["time"], color="crimson", lw=0.8, alpha=0.5)
+    ax_a.plot([], [], color="crimson", lw=0.8, label="채택 프레임 시각")
     ax_a.set_ylim(0, 1)
     ax_a.set_yticks([])
     ax_a.set_ylabel("음성")
@@ -132,7 +132,7 @@ def render(out_dir: Path, title: str) -> Path:
     ax_a.legend(loc="upper left", fontsize=8)
 
     plt.tight_layout()
-    out_path = out_dir / "debug_graph.png"
+    out_path = unit / "debug_graph.png"
     fig.savefig(out_path, dpi=110)
     plt.close(fig)
     return out_path
