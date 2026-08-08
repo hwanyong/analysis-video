@@ -12,31 +12,30 @@
 채택 74건 중 28건이 이 상태였다. 짝인 트리거가 살아남은 경우엔 반대로 구간이
 0.07초로 퇴화해 같은 대사가 두 이미지에 중복으로 붙었다.
 
-화면 경계는 anchor-diff 전환 이벤트에서 온다(AdaptiveDetector는 보조 검출기라
-경계 정의에 섞지 않는다 — 구간의 정의를 검출기 하나에 고정해 SSOT를 지킨다):
-화면 k = [직전 트리거 시각, 이번 전환이 시작된 시각].
+화면 경계는 사건 목록에서 온다: 화면 k = [직전 사건의 직후 촬영 시각,
+이번 사건의 시각]. 사건 자체(변화가 일어나는 중)는 어느 화면에도 속하지 않는다.
 """
 from bisect import bisect_right
 
 
-def screen_periods(anchor_events: list[dict], duration: float,
+def screen_periods(events: list[dict], duration: float,
                    window: tuple[float, float] | None = None) -> list[tuple[float, float]]:
-    """화면이 떠 있던 구간들. 전환 자체(시작~트리거, 실측 중앙값 1프레임)는
-    어느 화면에도 속하지 않는 '바뀌는 중'이므로 다음 화면 쪽에 흡수된다.
+    """화면이 떠 있던 구간들. 변화가 일어나는 동안(사건 시각~직후 촬영 시각)은
+    어느 화면에도 속하지 않으므로 다음 화면 쪽에 흡수된다.
 
     window를 주면 그 구간으로 잘라낸다 — 부분 분석에서 첫 화면은 구간 시작에서
     시작하고(그 화면의 진짜 등장은 구간 이전이다) 마지막은 구간 끝에서 닫힌다."""
     lo, hi = window if window is not None else (0.0, duration)
     periods = []
     start = lo
-    for e in anchor_events:
-        end = e.get("transition_start_time")
-        trigger = e.get("trigger_time")
-        if end is None or trigger is None or not lo <= trigger <= hi:
+    for e in events:
+        end = e.get("time")
+        resume = e.get("after_time")
+        if end is None or resume is None or not lo <= end <= hi:
             continue
         if end > start:
             periods.append((start, min(end, hi)))
-        start = trigger
+        start = resume
     if hi > start:
         periods.append((start, hi))
     return periods or [(lo, hi)]
@@ -66,7 +65,7 @@ def assign_segments(segments: list[dict],
 
 
 def attach_dialogue(records: list[dict], segments: list[dict], duration: float,
-                    anchor_events: list[dict] | None = None,
+                    events: list[dict] | None = None,
                     window: tuple[float, float] | None = None
                     ) -> list[tuple[float, float]]:
     """모든 레코드에 소속 화면을 매긴다 — 탈락한 것도 포함.
@@ -74,7 +73,7 @@ def attach_dialogue(records: list[dict], segments: list[dict], duration: float,
     탈락 레코드에도 화면을 매기는 이유: 어떤 화면은 후보가 **전부** 탈락한다
     (그림이 비어서). 그 화면을 기록에서 지우면 그동안의 대사가 통째로 사라진다
     — 실측 유실 video1 64%, video2 33%, video3 14%."""
-    periods = screen_periods(anchor_events or [], duration, window)
+    periods = screen_periods(events or [], duration, window)
     starts = [p[0] for p in periods]
     # 구간 밖의 대사는 이 분석의 것이 아니다 — 배정 대상에서 제외한다
     lo, hi = periods[0][0], periods[-1][1]

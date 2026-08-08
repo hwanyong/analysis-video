@@ -107,7 +107,7 @@ record. Add `--run <name>` when several runs exist. The image lands in
 
 Every stage is resumable: if your harness kills a run, re-invoke the SAME
 command — completed stages are skipped via state.json. Detection is cached per
-video (detect_anchor.npz, detect_adaptive.json) and shared by every run, so
+video (detect_signals.npz, detect_adaptive.json) and shared by every run, so
 adding a `--range` later does not re-scan the video.
 NOTE: on long videos (30+ min) a cold pass can take several minutes — prefer a
 harness timeout of 10 minutes, or re-invoke until it completes.

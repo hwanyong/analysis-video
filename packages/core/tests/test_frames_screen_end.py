@@ -1,6 +1,6 @@
-"""화면의 끝 상태도 후보여야 한다 + anchor 캐시는 스키마로 검증한다.
+"""화면의 끝 상태도 후보여야 한다 + 측정 캐시는 스키마로 검증한다.
 
-트리거는 "변화가 끝나고 안정된 첫 프레임"이라 곧 **새 화면이 시작된 순간**이다.
+사건의 직후 촬영 지점은 곧 **새 화면이 시작된 순간**이다.
 그 뒤 수십 초에 걸쳐 채워지는 판서는 어디에도 안 남는다 — 실측 video3의 한
 화면은 105초 동안 885자를 설명하며 페이지를 채우는데, 거기 붙은 이미지는
 거의 빈 페이지였고 완성된 페이지는 대사가 딴 얘기인 다음 블록에 가 있었다.
@@ -19,32 +19,29 @@ from analysis_video import frames as frames_mod
 FPS = 30.0
 
 
-def _anchor_result(events, **over):
+def _measured(**over):
     base = {
-        "fps": FPS, "n_frames": 60,
+        "fps": FPS, "band": (0.0, 1.0),
         "anchor_series": np.zeros(60), "rate_series": np.zeros(60),
         "area_series": np.zeros(60), "time_series": np.arange(60) / FPS,
-        "events": events, "row_change_freq": np.zeros(36),
-        "anchor_threshold": 0.02, "rate_threshold": 0.0015,
-        "cut_area_threshold": 0.04,
+        "row_change_freq": np.zeros(36),
     }
     base.update(over)
     return base
 
 
-def _event(settled_idx=30, trigger_idx=45, start_idx=40):
+def _event(before_idx=30, after_idx=45, index=40):
     """시각은 첫 화면 시드(w_start+0.5초=0.5초)보다 뒤여야 이 화면의 '끝'이 된다."""
-    return {"anchor_idx": 0, "anchor_time": 0.0,
-            "transition_start_idx": start_idx, "transition_start_time": start_idx / FPS,
-            "settled_idx": settled_idx, "settled_time": settled_idx / FPS,
-            "trigger_idx": trigger_idx, "trigger_time": trigger_idx / FPS}
+    return {"index": index, "time": index / FPS, "signals": ["cut"],
+            "before_idx": before_idx, "before_time": before_idx / FPS,
+            "after_idx": after_idx, "after_time": after_idx / FPS}
 
 
 @pytest.fixture
 def stub_pipeline(monkeypatch, tmp_path):
     """검출·추출·중복판정을 대역으로 세우고 후보 생성만 남긴다."""
-    monkeypatch.setattr(frames_mod, "_cached_anchor",
-                        lambda vp, cd, a, r, c: _anchor_result([_event()]))
+    monkeypatch.setattr(frames_mod, "_cached_signals", lambda vp, cd: _measured())
+    monkeypatch.setattr(frames_mod.events_mod, "find", lambda m, **kw: [_event()])
     monkeypatch.setattr(frames_mod, "_cached_adaptive", lambda vp, od, dur, ft: [])
     monkeypatch.setattr(frames_mod.media, "get_duration", lambda p: 10.0)
     monkeypatch.setattr(frames_mod.adaptive, "pick_stable_time",
@@ -71,23 +68,21 @@ def test_screen_end_candidate_is_emitted(stub_pipeline, tmp_path):
     by_source = {tuple(r["sources"]): r for r in result["records"]}
 
     assert ("screen-end",) in by_source, "화면 끝 상태 후보가 없다"
-    assert ("anchor-diff",) in by_source, "트리거 후보가 없다"
-    end, trig = by_source[("screen-end",)], by_source[("anchor-diff",)]
-    assert end["time"] == pytest.approx(30 / FPS), "settled_idx 자리를 써야 한다"
-    assert end["time"] < trig["time"], "끝 상태가 다음 화면 트리거보다 앞선다"
+    assert ("screen-start",) in by_source, "새 화면 후보가 없다"
+    end, trig = by_source[("screen-end",)], by_source[("screen-start",)]
+    assert end["time"] == pytest.approx(30 / FPS), "events가 준 before 자리를 써야 한다"
+    assert end["time"] < trig["time"], "끝 상태가 새 화면보다 앞선다"
 
 
-def test_screen_end_uses_settled_not_transition_start(monkeypatch, stub_pipeline,
-                                                      tmp_path):
-    """점진적 변화는 임계를 **중간에** 넘는다. transition_start-1을 집으면 이미
-    섞이는 중인 프레임이 잡힌다(실측 video2 41%·video1 36%, 최대 10프레임).
-    검출기가 되짚어 준 settled_idx를 그대로 써야 한다."""
-    monkeypatch.setattr(frames_mod, "_cached_anchor",
-                        lambda vp, cd, a, r, c: _anchor_result(
-                            [_event(settled_idx=25)]))  # 시작-1 = 39가 아니라 25
+def test_screen_end_uses_the_events_capture_point(monkeypatch, stub_pipeline,
+                                                  tmp_path):
+    """촬영 지점은 events가 정한다 — frames가 자기 나름대로 다시 고르면
+    "사건 주변에서만 고른다"는 보장이 깨진다."""
+    monkeypatch.setattr(frames_mod.events_mod, "find",
+                        lambda m, **kw: [_event(before_idx=25)])
     result = frames_mod.build_frames(tmp_path / "v.mkv", tmp_path / "s.analysis")
     end = [r for r in result["records"] if r["sources"] == ["screen-end"]][0]
-    assert end["time"] == pytest.approx(25 / FPS), "되짚은 자리를 안 쓰고 있다"
+    assert end["time"] == pytest.approx(25 / FPS), "events가 준 자리를 안 쓰고 있다"
 
 
 def test_screen_end_dropped_when_screen_never_changed(monkeypatch, stub_pipeline,
@@ -100,15 +95,14 @@ def test_screen_end_dropped_when_screen_never_changed(monkeypatch, stub_pipeline
     result = frames_mod.build_frames(tmp_path / "v.mkv", tmp_path / "n.analysis")
     sources = [tuple(r["sources"]) for r in result["records"]]
     assert ("screen-end",) not in sources, "안 바뀐 화면의 끝 상태는 생략"
-    assert ("anchor-diff",) in sources, "트리거는 그대로 남는다"
+    assert ("screen-start",) in sources, "새 화면 후보는 그대로 남는다"
 
 
 def test_screen_end_skipped_when_it_would_precede_the_screen(monkeypatch,
                                                              stub_pipeline, tmp_path):
-    """되짚기가 화면 시작보다 앞으로 가면 그건 이 화면의 끝이 아니다."""
-    monkeypatch.setattr(frames_mod, "_cached_anchor",
-                        lambda vp, cd, a, r, c: _anchor_result(
-                            [_event(settled_idx=3, trigger_idx=6, start_idx=4)]))
+    """촬영 지점이 화면 시작보다 앞으로 가면 그건 이 화면의 끝이 아니다."""
+    monkeypatch.setattr(frames_mod.events_mod, "find",
+                        lambda m, **kw: [_event(before_idx=3, after_idx=6, index=4)])
     result = frames_mod.build_frames(tmp_path / "v.mkv", tmp_path / "e.analysis")
     assert ("screen-end",) not in [tuple(r["sources"]) for r in result["records"]]
 
@@ -121,49 +115,42 @@ def test_gate_params_are_recorded(stub_pipeline, tmp_path):
     assert p["body_band"] == [0.0, 1.0], "띠가 없으면 전체가 본문"
 
 
-def test_v1_anchor_cache_is_rejected(monkeypatch, tmp_path):
+def test_signals_cache_is_schema_guarded(monkeypatch, tmp_path):
     """구 캐시는 키 구성이 달라 조회하면 KeyError로 죽는다. 스키마를 먼저 봐서
-    조용히 버리고 재검출해야 한다."""
+    조용히 버리고 다시 측정해야 한다."""
     out = tmp_path / "c.analysis"
     out.mkdir()
-    np.savez_compressed(
-        out / "detect_anchor.npz",
-        cum_series=np.zeros(3), rate_series=np.zeros(3),
-        time_series=np.arange(3) / FPS, fps=FPS,
-        cum_threshold=0.02, rate_threshold=0.0015,
-        events_json=json.dumps([]))
+    np.savez_compressed(out / "detect_signals.npz", cum_series=np.zeros(3), fps=FPS)
 
     calls = []
+    monkeypatch.setattr(frames_mod.signals, "scan_rows",
+                        lambda vp: (calls.append("scan"), np.zeros(36))[1])
+    monkeypatch.setattr(frames_mod.signals, "measure",
+                        lambda vp, band, **kw: (calls.append("measure"), _measured())[1])
 
-    def fake_detect(video_path, anchor_threshold, rate_threshold, cut_area_threshold):
-        calls.append(True)
-        return _anchor_result([], anchor_threshold=anchor_threshold,
-                              rate_threshold=rate_threshold,
-                              cut_area_threshold=cut_area_threshold)
-    monkeypatch.setattr(frames_mod.anchor, "transition_aware_anchor_diff", fake_detect)
-
-    r = frames_mod._cached_anchor(tmp_path / "v.mkv", out, 0.02, 0.0015, 0.04)
-    assert calls, "구 캐시를 버리고 재검출해야 한다"
-    assert "area_series" in r
+    r = frames_mod._cached_signals(tmp_path / "v.mkv", out)
+    assert calls == ["scan", "measure"], "구 캐시를 버리고 다시 측정해야 한다"
+    assert "area_series" in r and "band" in r
 
     calls.clear()
-    again = frames_mod._cached_anchor(tmp_path / "v.mkv", out, 0.02, 0.0015, 0.04)
-    assert not calls, "같은 파라미터면 캐시를 재사용해야 한다"
-    assert again["cut_area_threshold"] == 0.04
-    assert "row_change_freq" in again, "띠 산출용 통계가 캐시에서 살아 나와야 한다"
+    again = frames_mod._cached_signals(tmp_path / "v.mkv", out)
+    assert not calls, "새로 쓴 캐시는 재사용해야 한다"
+    assert again["band"] == (0.0, 1.0)
 
 
-def test_cache_invalidated_when_cut_area_threshold_changes(monkeypatch, tmp_path):
-    """새 파라미터도 캐시 키에 들어가야 한다 — 아니면 임계를 바꿔도 옛 결과가 나온다."""
+def test_thresholds_do_not_invalidate_the_measurement_cache(monkeypatch, tmp_path):
+    """임계는 판단의 소관이다. 바꿨다고 전 프레임을 다시 디코드하면 2단계로
+    나눈 의미가 없다."""
     out = tmp_path / "d.analysis"
     out.mkdir()
     calls = []
+    monkeypatch.setattr(frames_mod.signals, "scan_rows",
+                        lambda vp: (calls.append("scan"), np.zeros(36))[1])
+    monkeypatch.setattr(frames_mod.signals, "measure",
+                        lambda vp, band, **kw: (calls.append("measure"), _measured())[1])
 
-    def fake_detect(video_path, anchor_threshold, rate_threshold, cut_area_threshold):
-        calls.append(cut_area_threshold)
-        return _anchor_result([], cut_area_threshold=cut_area_threshold)
-    monkeypatch.setattr(frames_mod.anchor, "transition_aware_anchor_diff", fake_detect)
-
-    frames_mod._cached_anchor(tmp_path / "v.mkv", out, 0.02, 0.0015, 0.04)
-    frames_mod._cached_anchor(tmp_path / "v.mkv", out, 0.02, 0.0015, 0.06)
-    assert calls == [0.04, 0.06], "임계가 바뀌면 재검출"
+    frames_mod._cached_signals(tmp_path / "v.mkv", out)
+    assert len(calls) == 2
+    calls.clear()
+    frames_mod._cached_signals(tmp_path / "v.mkv", out)
+    assert calls == [], "측정 캐시는 임계와 무관하게 살아 있어야 한다"

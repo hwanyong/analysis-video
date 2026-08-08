@@ -1,6 +1,6 @@
 """디버그 그래프 — frames 스테이지가 남긴 산출물만 읽어서 그린다.
 
-분석을 재계산하지 않는다: detect_anchor.npz(시계열 캐시) + frames.json(판정 레코드)
+분석을 재계산하지 않는다: detect_signals.npz(시계열 캐시) + frames.json(판정 레코드)
 + transcript.json을 그대로 시각화하므로 "그래프에 보이는 것 = 실제 파이프라인
 산출"이 구조적으로 보장된다. x축은 저장된 PTS(time_series)를 사용한다.
 matplotlib은 [viz] extra — 지연 임포트하고 없으면 EXIT_DEPS로 안내한다.
@@ -49,17 +49,18 @@ def render(out_dir: Path, title: str, unit_dir: Path | None = None) -> Path:
     import matplotlib.pyplot as plt
 
     unit = unit_dir if unit_dir is not None else out_dir
-    data = np.load(out_dir / "detect_anchor.npz")
+    data = np.load(out_dir / "detect_signals.npz")
     anchor_s, rate, area = data["anchor_series"], data["rate_series"], data["area_series"]
     fps = float(data["fps"])
-    anchor_threshold = float(data["anchor_threshold"])
-    rate_threshold = float(data["rate_threshold"])
-    cut_area_threshold = float(data["cut_area_threshold"])
+    params = json.loads((unit / "frames.json").read_text(encoding="utf-8"))["params"]
+    anchor_threshold = float(params["anchor_threshold"])
+    rate_threshold = float(params["rate_threshold"])
+    cut_area_threshold = float(params["cut_area_threshold"])
 
     frames_info = json.loads((unit / "frames.json").read_text(encoding="utf-8"))
     transcript = json.loads((out_dir / "transcript.json").read_text(encoding="utf-8"))
     records = frames_info["records"]
-    events = frames_info["anchor_events"]
+    events = frames_info["events"]
 
     n = len(anchor_s)
     times = data["time_series"] if "time_series" in data else np.arange(n) / fps
@@ -78,8 +79,8 @@ def render(out_dir: Path, title: str, unit_dir: Path | None = None) -> Path:
                  label=f"anchor_threshold={anchor_threshold}")
 
     for e in events:
-        start = e.get("transition_start_time", e["transition_start_idx"] / fps)
-        end = e.get("trigger_time", e["trigger_idx"] / fps)
+        start = e["time"]
+        end = e["after_time"]
         ax_v.axvspan(start, end, color="orange", alpha=0.15)
         ax_v.plot(e.get("anchor_time", e["anchor_idx"] / fps), 0,
                   marker="v", color="blue", ms=7, zorder=5)

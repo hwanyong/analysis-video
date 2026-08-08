@@ -1,7 +1,7 @@
 """`.analysis/` 산출물 로더 — 코어가 만든 파일을 읽기만 한다(재구현 0).
 
 GUI에 보이는 것 = 실제 파이프라인 산출물이 되도록 metadata.json / frames.json /
-transcript.json / detect_anchor.npz 를 그대로 노출하고, 파일 변경을 감시해
+transcript.json / detect_signals.npz 를 그대로 노출하고, 파일 변경을 감시해
 CLI가 재분석하면 자동으로 갱신 신호를 낸다.
 """
 import bisect
@@ -83,7 +83,11 @@ class Store(QObject):
 
         self.window = self.metadata.get("window", [0.0, self.duration])
         self.screens = self.metadata.get("screens", [])
-        npz = self.root / "detect_anchor.npz"
+        # 시계열은 측정 캐시(영상 전체분), 사건과 임계는 이 단위의 frames.json.
+        # 측정과 판단이 갈라져 있으므로 읽는 곳도 갈라진다.
+        build = self._read_json("frames.json") or {}
+        params = build.get("params", {})
+        npz = self.root / "detect_signals.npz"
         self.series = None
         self.transitions = []
         if npz.exists():
@@ -95,22 +99,18 @@ class Store(QObject):
                 self.series = {
                     "times": times, "anchor": d["anchor_series"],
                     "rate": d["rate_series"], "area": d["area_series"],
-                    "anchor_threshold": float(d["anchor_threshold"]),
-                    "rate_threshold": float(d["rate_threshold"]),
-                    "cut_area_threshold": float(d["cut_area_threshold"]),
+                    "anchor_threshold": float(params.get("anchor_threshold", 0.02)),
+                    "rate_threshold": float(params.get("rate_threshold", 0.0015)),
+                    "cut_area_threshold": float(params.get("cut_area_threshold", 0.02)),
                 }
-                # 앵커가 흔들리기 시작해(transition_start) 안정 판정으로 트리거되기까지의
-                # 구간 — 검출기가 "왜 여기서 끊었는가"를 설명하는 유일한 증거다.
-                # npz는 영상 전체분이지만 이 단위는 자기 구간만 본다. 코어가 후보를
-                # 거른 기준(트리거 시각이 구간 안)과 같게 걸러야 여기 그려지는 전환이
-                # 이 단위의 화면 경계와 1:1로 맞는다.
-                lo, hi = self.window
-                self.transitions = [
-                    (float(e["transition_start_time"]), float(e["trigger_time"]))
-                    for e in json.loads(str(d["events_json"]))
-                    if lo <= float(e["trigger_time"]) <= hi]
             except Exception:
                 self.series = None
+        # 변화가 일어나고 있던 구간 — 사건 시각부터 새 화면이 잡힌 시각까지.
+        # 검출기가 "왜 여기서 끊었는가"를 설명하는 유일한 증거다.
+        lo, hi = self.window
+        self.transitions = [(float(e["time"]), float(e["after_time"]))
+                            for e in build.get("events", [])
+                            if lo <= float(e["time"]) <= hi]
 
         self._frame_starts = [f["time"] for f in self.frames]
         self._seg_starts = [s["start"] for s in self.segments]

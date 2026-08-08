@@ -12,13 +12,13 @@
 
     <video>.analysis/
     ├── video.mkv  audio.wav  transcript.json   ← 원본 전체, 1회, 공유
-    ├── detect_anchor.npz  detect_adaptive.json ← 검출 캐시도 공유(영상 전체 1회)
+    ├── detect_signals.npz  detect_adaptive.json ← 측정 캐시도 공유(영상 전체 1회)
     ├── context.md                              ← 인덱스: 어떤 분석들이 있는가
     └── runs/<이름>/  metadata.json  context.md  frames/  requested/
 
 검출을 단위마다 다시 돌리지 않는 이유: 검출기는 전 프레임을 훑어야 하는데
 그 비용이 스테이지의 대부분이다. 한 번 돌려 두고 단위는 자기 구간으로 거르면
-구간이 여러 개일수록 이득이고, anchor-diff와 AdaptiveDetector가 프레임 **번호**
+구간이 여러 개일수록 이득이고, 신호 측정과 AdaptiveDetector가 프레임 **번호**
 공간을 공유하는 결합(커밋 291e64e 참조)도 건드리지 않는다.
 """
 import json

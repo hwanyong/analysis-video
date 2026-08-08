@@ -1,25 +1,29 @@
-"""프레임 후보 통합 — initial ∪ anchor-diff ∪ screen-end ∪ AdaptiveDetector.
+"""프레임 후보 생성과 게이트 — 사건마다 screen-start·screen-end 두 지점.
 
 추출 기준은 **프레임 변화량 하나**다. 예전에는 호출 에이전트가 전사를 읽고
 지정한 "중요한 시각"(importance-point)에서도 뽑았지만, 화면을 보지 못한 채
 텍스트만으로 고른 시각이 시각적 검출과 같은 자리를 놓고 경쟁해 기준이 흐려졌다.
 사후 정밀 추출은 `frame --at`이 맡는다.
 
-anchor-diff 이벤트는 후보를 **둘** 낸다: 새 화면의 시작(anchor-diff = 트리거)과
-그 화면의 끝 상태(screen-end = 다음 전환이 시작되기 직전의 마지막 안정 프레임).
-어느 한쪽만 잡으면 반드시 잃는다 — 시작만 잡으면 판서가 채워지기 전의 빈 페이지만
-남고, 끝만 잡으면 "무엇에서 무엇으로 갔는가"가 사라진다. 끝 상태를 남길지는
-**그 화면의 시작과 견줘** 정한다(_pair_changed): 슬라이드처럼 뜬 뒤 그대로인
-화면은 두 장이 될 이유가 없다 — 실측 video2는 24개 화면 중 3개만 끝 상태가 필요했다.
+사건 하나가 후보를 **둘** 낸다: 새 화면의 시작(screen-start)과 그 화면의 끝
+상태(screen-end). 어느 한쪽만 잡으면 반드시 잃는다 — 시작만 잡으면 판서가
+채워지기 전의 빈 페이지만 남고, 끝만 잡으면 "무엇에서 무엇으로 갔는가"가
+사라진다. 끝 상태를 남길지는 **그 화면의 시작과 견줘** 정한다(_pair_changed):
+슬라이드처럼 뜬 뒤 그대로인 화면은 두 장이 될 이유가 없다.
 
 판정 기록 보존 원칙: 어떤 후보도 조용히 사라지지 않는다. 탈락 이미지는
 frames/rejected/로 이동하고 레코드에 사유가 남으며, 중복으로 탈락해도
 출처(sources)는 생존 레코드로 승계된다.
 
 파일명은 순번 기반(scene_003_t0012.33.jpg)이라 시각 반올림 충돌이 불가능하다.
-검출기 결과는 out_dir에 캐시(detect_anchor.npz, detect_adaptive.json)되어
-재실행 시 전체 디코드를 건너뛴다 — 긴 영상에서 타임아웃으로 잘린 frames를
-재호출하면 검출부터가 아니라 추출부터 이어지는 효과.
+추출은 **2단계**다. 1단계(events)가 세 신호의 봉우리에서 "언제 화면이 바뀌었나"를
+정하고, 2단계가 사건마다 촬영 지점 둘을 고른다 — 사라지는 화면의 완성 상태
+(screen-end)와 새 화면(screen-start). 한 덩어리였을 때는 촬영 지점이 사건에서
+최대 2.54초까지 밀려났다.
+
+측정 결과는 cache_dir에 캐시(detect_signals.npz, detect_adaptive.json)되어
+재실행 시 전체 디코드를 건너뛴다. 캐시에 임계는 안 들어간다 — 임계는 판단의
+소관이라 바꿔도 다시 측정할 이유가 없다.
 """
 import json
 from pathlib import Path
@@ -29,14 +33,20 @@ from PIL import Image
 from skimage.metrics import structural_similarity as ssim
 
 from . import media
-from .detect import adaptive, anchor, overlay
+from .detect import adaptive, events as events_mod, overlay, signals
 from .errors import log
 
 # 프레임 번호를 실제 PTS로 옮기게 된 이후의 adaptive 캐시 (v1은 선언 fps 근사였다)
 ADAPTIVE_SCHEMA = "adaptive/2"
 # 컷 면적(cut_area)을 전환 검출에 도입하고 cum_* → anchor_* 로 개명한 이후의
 # anchor 캐시. v1에는 area_series가 아예 없고 키 이름도 달라 재사용이 불가능하다.
-ANCHOR_SCHEMA = "anchor/3"
+SIGNALS_SCHEMA = "signals/1"
+
+# 앵커를 언제 옮길지는 anchor_diff 신호의 내부 사정이라 사용자 임계와 분리한다.
+# 판단(events)의 임계를 바꿔도 측정 캐시가 무효화되지 않게 하는 것이 목적이다.
+ANCHOR_RESET_THRESHOLD = 0.02
+CUT_RESET_THRESHOLD = 0.02
+RATE_SETTLE_THRESHOLD = 0.0015
 
 
 def _gray_for_compare(img_path: Path, w: int = 400, h: int = 225) -> np.ndarray:
@@ -64,43 +74,44 @@ def _pair_changed(video_path: Path, t_pre: float, t_trigger: float,
     return ssim(overlay.crop(a, band), overlay.crop(b, band)) < threshold
 
 
-def _cached_anchor(video_path: Path, out_dir: Path, anchor_threshold: float,
-                   rate_threshold: float, cut_area_threshold: float) -> dict:
-    cache = out_dir / "detect_anchor.npz"
+def _cached_signals(video_path: Path, out_dir: Path) -> dict:
+    """측정 결과 캐시. 담기는 것은 **시계열과 띠뿐**이고 임계는 들어가지 않는다 —
+    임계는 판단(events)의 소관이라, 바꿔도 디코드를 다시 할 이유가 없다."""
+    cache = out_dir / "detect_signals.npz"
     if cache.exists():
-        # 캐시는 수치 배열 + JSON 문자열(유니코드 배열)만 담는다 — pickle 불필요/금지
         data = np.load(cache)
-        # 구버전은 키 구성 자체가 달라 조회하면 KeyError로 죽는다. 스키마부터 본다.
         schema = str(data["schema"]) if "schema" in data else ""
-        if schema != ANCHOR_SCHEMA:
-            log("[frames] anchor-diff 캐시가 구버전 — 재검출합니다")
-        elif (float(data["anchor_threshold"]) == anchor_threshold
-                and float(data["rate_threshold"]) == rate_threshold
-                and float(data["cut_area_threshold"]) == cut_area_threshold):
-            log("[frames] anchor-diff 캐시 재사용 (detect_anchor.npz)")
+        if schema == SIGNALS_SCHEMA:
+            log("[frames] 신호 측정 캐시 재사용 (detect_signals.npz)")
             return {
-                "fps": float(data["fps"]), "n_frames": int(data["anchor_series"].shape[0]),
-                "anchor_series": data["anchor_series"], "rate_series": data["rate_series"],
-                "area_series": data["area_series"], "time_series": data["time_series"],
-                "events": json.loads(str(data["events_json"])),
+                "fps": float(data["fps"]),
+                "band": (float(data["band"][0]), float(data["band"][1])),
+                "time_series": data["time_series"],
+                "anchor_series": data["anchor_series"],
+                "rate_series": data["rate_series"],
+                "area_series": data["area_series"],
                 "row_change_freq": data["row_change_freq"],
-                "anchor_threshold": anchor_threshold, "rate_threshold": rate_threshold,
-                "cut_area_threshold": cut_area_threshold,
             }
+        log("[frames] 신호 측정 캐시가 구버전 — 다시 측정합니다")
 
-    log("[frames] anchor-diff 전환추적 실행 중...")
-    result = anchor.transition_aware_anchor_diff(
-        video_path, anchor_threshold=anchor_threshold, rate_threshold=rate_threshold,
-        cut_area_threshold=cut_area_threshold)
+    log("[frames] 1/2 오버레이 띠 산출 중...")
+    freq = signals.scan_rows(video_path)
+    band = overlay.body_band(freq)
+    if band != overlay.FULL:
+        log(f"[frames] 고정 오버레이 띠 — 본문 세로 {band[0]:.0%}~{band[1]:.0%}만 측정")
+    else:
+        log("[frames] 고정 오버레이 띠 없음 — 화면 전체를 측정")
+    log("[frames] 2/2 신호 측정 중...")
+    r = signals.measure(video_path, band, anchor_threshold=ANCHOR_RESET_THRESHOLD,
+                        rate_threshold=RATE_SETTLE_THRESHOLD,
+                        cut_area_threshold=CUT_RESET_THRESHOLD)
+    r["row_change_freq"] = freq
     np.savez_compressed(
-        cache, schema=ANCHOR_SCHEMA,
-        anchor_series=result["anchor_series"], rate_series=result["rate_series"],
-        area_series=result["area_series"], time_series=result["time_series"],
-        fps=result["fps"], anchor_threshold=anchor_threshold,
-        rate_threshold=rate_threshold, cut_area_threshold=cut_area_threshold,
-        row_change_freq=result["row_change_freq"],
-        events_json=json.dumps(result["events"]))
-    return result
+        cache, schema=SIGNALS_SCHEMA, fps=r["fps"], band=np.array(band),
+        time_series=r["time_series"], anchor_series=r["anchor_series"],
+        rate_series=r["rate_series"], area_series=r["area_series"],
+        row_change_freq=freq)
+    return r
 
 
 def _cached_adaptive(video_path: Path, out_dir: Path, duration: float,
@@ -140,7 +151,7 @@ def build_frames(video_path: Path, out_dir: Path, *,
 
     검출은 영상 전체에 대해 한 번만 돌려 cache_dir에 두고, 단위는 자기 window로
     거른다. 단위마다 다시 검출하면 구간 수만큼 전 프레임 디코드를 반복하게 되고,
-    구간별로 디코드를 잘라내면 anchor-diff와 AdaptiveDetector가 공유하는 프레임
+    구간별로 디코드를 잘라내면 신호 측정과 AdaptiveDetector가 공유하는 프레임
     **번호** 공간이 어긋난다(커밋 291e64e에서 397초 오차를 낸 그 결합).
     """
     cache_dir = cache_dir if cache_dir is not None else out_dir
@@ -152,50 +163,51 @@ def build_frames(video_path: Path, out_dir: Path, *,
     duration = media.get_duration(video_path)
     w_start, w_end = window if window is not None else (0.0, duration)
 
-    anchor_result = _cached_anchor(video_path, cache_dir, anchor_threshold,
-                                   rate_threshold, cut_area_threshold)
-    fps = anchor_result["fps"]
-    time_series = anchor_result["time_series"]
-    band = overlay.body_band(anchor_result["row_change_freq"])
-    if band != overlay.FULL:
-        log(f"[frames] 고정 오버레이 띠 감지 — 본문 세로 {band[0]:.0%}~{band[1]:.0%}만 비교")
+    measured = _cached_signals(video_path, cache_dir)
+    fps = measured["fps"]
+    time_series = measured["time_series"]
+    band = measured["band"]
+
+    # 1단계 — 언제. 세 신호의 봉우리 합집합 + AdaptiveDetector(보조 검출기).
+    adaptive_times = [e["detected_at"] for e in
+                      _cached_adaptive(video_path, cache_dir, duration, time_series)]
+    found = events_mod.find(
+        measured, anchor_threshold=anchor_threshold, rate_threshold=rate_threshold,
+        cut_area_threshold=cut_area_threshold, extra_times=adaptive_times)
+    by_signal: dict[str, int] = {}
+    for e in found:
+        for sig in e["signals"]:
+            by_signal[sig] = by_signal.get(sig, 0) + 1
+    log(f"[frames] 사건 {len(found)}건 — 신호별 " +
+        " ".join(f"{k} {v}" for k, v in sorted(by_signal.items())))
 
     def new_candidate(time: float, detected_at: float, source: str) -> dict:
         return {"time": time, "detected_at": detected_at, "sources": [source]}
 
-    # 구간의 첫 화면은 어떤 검출기도 방출하지 않는다(전환이 구간 시작 전에
-    # 일어났으므로) — 명시적 시드. 오프닝 페이드 대비로 안정화를 거친다;
-    # 어두우면 게이트가 사유와 함께 걸러준다.
+    # 2단계 — 어디서. 사건마다 직후(새 화면의 시작)와, 그 화면이 사라지기 직전의
+    # 완성 상태. 두 지점 모두 사건 주변에서 고르므로 사건에서 멀어질 수 없다.
+    #
+    # 구간의 첫 화면은 어떤 신호도 방출하지 않는다(전환이 구간 시작 전에
+    # 일어났으므로) — 명시적 시드.
     initial_t = adaptive.pick_stable_time(video_path, w_start, duration, offset=0.5)
     candidates = [new_candidate(initial_t, w_start, "initial")]
 
     n_same = 0
     screen_start = initial_t  # 지금 보고 있는 화면이 시작된 시각
-    for e in anchor_result["events"]:
-        # 전환추적된 트리거는 이미 안정 상태에서 잡힌 것 — 추가 안정화 불필요
-        t = e.get("trigger_time", e["trigger_idx"] / fps)
-        # 화면의 **끝 상태**. 트리거 하나만 잡으면 화면이 시작된 순간만 남는데,
-        # 판서는 그 뒤 수십 초에 걸쳐 채워진다 — 실측 video3의 한 화면은 105초
-        # 동안 885자를 설명하며 페이지를 채우는데 이미지는 거의 빈 페이지였다.
-        # 남길지는 **그 화면의 시작과 견줘** 정한다. 전환 전후를 견주던 이전 방식은
-        # 경계 너머 비교라 "이 화면 안에서 무슨 일이 있었나"를 묻지 않았다.
-        si = e.get("settled_idx")
-        if si is not None and 0 <= si < len(time_series):
-            t_end = float(time_series[si])
-            if t_end - screen_start > 1.0 / max(fps, 1.0):
-                if _pair_changed(video_path, screen_start, t_end, pair_dup_threshold, band):
-                    candidates.append(new_candidate(t_end, t_end, "screen-end"))
-                else:
-                    n_same += 1
-        candidates.append(new_candidate(t, t, "anchor-diff"))
-        screen_start = t
+    for e in found:
+        t_end = e["before_time"]
+        # 화면의 끝 상태를 남길지는 **그 화면의 시작과 견줘** 정한다. 뜬 뒤
+        # 그대로인 슬라이드는 두 장이 될 이유가 없다.
+        if t_end - screen_start > 1.0 / max(fps, 1.0):
+            if _pair_changed(video_path, screen_start, t_end, pair_dup_threshold, band):
+                candidates.append(new_candidate(t_end, e["time"], "screen-end"))
+            else:
+                n_same += 1
+        candidates.append(new_candidate(e["after_time"], e["time"], "screen-start"))
+        screen_start = e["after_time"]
     if n_same:
-        log(f"[frames] 화면 {len(anchor_result['events'])}개 중 {n_same}개는 "
+        log(f"[frames] 화면 {len(found)}개 중 {n_same}개는 "
             f"시작부터 끝까지 그대로였다 — 끝 상태 후보 생략")
-
-    for entry in _cached_adaptive(video_path, cache_dir, duration,
-                                  anchor_result["time_series"]):
-        candidates.append(new_candidate(entry["time"], entry["detected_at"], "adaptive"))
 
     # 구간 밖 후보는 버린다. initial 시드는 구간 시작에서 나왔으므로 살린다.
     n_all = len(candidates)
@@ -243,12 +255,11 @@ def build_frames(video_path: Path, out_dir: Path, *,
     records.sort(key=lambda r: r["time"])
 
     log(f"[frames] 완료: 채택 {len(accepted)}건 / 탈락 {len(records) - len(accepted)}건")
-    events = [e for e in anchor_result["events"]
-              if w_start <= e["trigger_time"] <= w_end]
+    in_window = [e for e in found if w_start <= e["time"] <= w_end]
     return {
         "records": records, "duration": duration, "fps": fps,
         "window": [round(w_start, 2), round(w_end, 2)],
-        "anchor_events": events,
+        "events": in_window,
         "params": {
             "anchor_threshold": anchor_threshold, "rate_threshold": rate_threshold,
             "cut_area_threshold": cut_area_threshold,

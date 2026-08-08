@@ -153,9 +153,9 @@ def _run_unit(video: Path, video_src: Path, out_dir: Path, rng, transcript: dict
 
     build = frames_mod.build_frames(video_src, unit, cache_dir=out_dir, window=win)
     screens = align.attach_dialogue(build["records"], transcript["segments"],
-                                    build["duration"], build["anchor_events"], win)
+                                    build["duration"], build["events"], win)
     manifest.write_json_atomic(unit / "frames.json", {
-        "records": build["records"], "anchor_events": build["anchor_events"],
+        "records": build["records"], "events": build["events"],
         "params": build["params"]})
     metadata = manifest.build_metadata(video, transcript, build, screens)
     _merge_requested(unit, metadata)

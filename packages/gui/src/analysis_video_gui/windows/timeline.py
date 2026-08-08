@@ -7,7 +7,7 @@
 
 레인(위→아래): 채택 프레임(검출 근거별 색, 복합 근거는 흰 테두리), 탈락 후보 ✗,
 주문 추출 ◆, 화면 경계 │, STT 세그먼트, GT 플래그, 그리고 아래 절반이
-anchor-diff 진단 — 전환 구간 음영 위에 anchor diff·순간 변화율·컷 면적을 각자의
+신호 진단 — 변화 구간 음영 위에 anchor diff·순간 변화율·컷 면적을 각자의
 기준선과 함께 따로 쌓는다. 세 곡선은 읽는 방향이 다르다(anchor diff와 컷 면적은
 넘겨야 전환 시작, 순간 변화율은 내려가야 트리거) — 겹쳐 그리면 해독이 불가능해서
 분리했다. 전환 시작은 anchor diff(점진 누적)와 컷 면적(컷)의 OR라 둘 다 보여야
@@ -67,12 +67,11 @@ RATE_FULL = 6.0     # rate == 6×임계에서 레인 천장
 AREA_FULL = 4.0     # cut_area == 4×임계에서 레인 천장
 
 SOURCE_COLORS = {
-    "anchor-diff": (60, 160, 90),
+    "screen-start": (60, 160, 90),
     "screen-end": (40, 200, 190),
-    "adaptive": (70, 130, 205),
     "initial": (150, 150, 150),
 }
-SOURCE_ORDER = ["adaptive", "screen-end", "anchor-diff", "initial"]
+SOURCE_ORDER = ["screen-end", "screen-start", "initial"]
 
 MIN_SPAN = 2.0        # 최대 확대에서 보이는 시간 폭(초)
 ZOOM_STEPS = 1000     # 배율 슬라이더 해상도 (로그 눈금)

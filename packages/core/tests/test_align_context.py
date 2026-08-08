@@ -14,8 +14,8 @@ def _seg(a, b, text):
 
 
 EVENTS = [
-    {"transition_start_time": 10.0, "trigger_time": 10.1},
-    {"transition_start_time": 30.0, "trigger_time": 30.1},
+    {"time": 10.0, "after_time": 10.1},
+    {"time": 30.0, "after_time": 30.1},
 ]
 
 
