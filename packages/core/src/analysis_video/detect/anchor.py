@@ -34,6 +34,7 @@ from pathlib import Path
 import numpy as np
 
 from .. import media
+from . import overlay
 
 # 컷 면적을 셀 때 '색이 바뀌었다'로 인정할 그레이 단계 차이. 255단계 중 25는
 # JPEG/코덱 노이즈(실측 수 단계)보다 확실히 크고, 판서 잉크↔배경 전이(약 43단계)
@@ -53,10 +54,14 @@ def transition_aware_anchor_diff(video_path: Path, anchor_threshold: float = 0.0
     time_list: list[float] = []
     events = []  # [{anchor_idx/_time, transition_start_idx/_time, trigger_idx/_time}, ...]
 
+    row_hits: np.ndarray | None = None  # 행별 '바뀐 프레임 수' — 오버레이 띠 산출용
+    n_pairs = 0
+
     def empty() -> dict:
         return {"fps": fps, "n_frames": 0,
                 "anchor_series": np.zeros(0), "rate_series": np.zeros(0),
                 "area_series": np.zeros(0), "time_series": np.zeros(0), "events": [],
+                "row_change_freq": np.zeros(0),
                 "anchor_threshold": anchor_threshold, "rate_threshold": rate_threshold,
                 "cut_area_threshold": cut_area_threshold}
 
@@ -83,6 +88,13 @@ def transition_aware_anchor_diff(video_path: Path, anchor_threshold: float = 0.0
         anchor_list.append(anchor_diff)
         rate_list.append(inst_diff)
         area_list.append(cut_area)
+        # 어느 '행'이 바뀌었나를 누적한다. 판정에는 쓰지 않고 통계만 모은다 —
+        # 이 한 번의 디코드로 오버레이 띠를 산출할 수 있게 하는 것이 목적이고,
+        # 정책(무엇을 띠로 볼 것인가)은 overlay 모듈이 나중에 결정한다.
+        row_changed = (delta > CUT_DELTA).mean(axis=1) > overlay.ROW_HIT_RATIO
+        row_hits = row_changed.astype(np.float64) if row_hits is None \
+            else row_hits + row_changed
+        n_pairs += 1
         prev = f
 
         if transition_start_idx is None:
@@ -94,10 +106,18 @@ def transition_aware_anchor_diff(video_path: Path, anchor_threshold: float = 0.0
         if inst_diff > rate_threshold:
             continue  # 아직 전환 진행중 — 트리거 보류, 커서만 전진
 
+        # 전환이 시작됐다고 **판정된** 프레임은 변화가 시작된 프레임이 아니다.
+        # 점진적 변화(크로스페이드·애니메이션)는 임계를 중간에 넘으므로, 그
+        # 한 칸 앞은 이미 섞여 있다(실측 video2 41%·video1 36%가 그런 경우,
+        # 최대 10프레임). 조용했던 마지막 프레임까지 되짚어야 "직전"이다.
+        settled_idx = transition_start_idx - 1
+        while settled_idx > anchor_idx and rate_list[settled_idx] > rate_threshold:
+            settled_idx -= 1
         events.append({
             "anchor_idx": anchor_idx, "anchor_time": anchor_time,
             "transition_start_idx": transition_start_idx,
             "transition_start_time": transition_start_time,
+            "settled_idx": settled_idx, "settled_time": time_list[settled_idx],
             "trigger_idx": i, "trigger_time": t,
         })
         anchor = f
@@ -111,6 +131,7 @@ def transition_aware_anchor_diff(video_path: Path, anchor_threshold: float = 0.0
         "anchor_series": np.array(anchor_list), "rate_series": np.array(rate_list),
         "area_series": np.array(area_list), "time_series": np.array(time_list),
         "events": events,
+        "row_change_freq": (row_hits / n_pairs) if n_pairs else np.zeros(0),
         "anchor_threshold": anchor_threshold, "rate_threshold": rate_threshold,
         "cut_area_threshold": cut_area_threshold,
     }

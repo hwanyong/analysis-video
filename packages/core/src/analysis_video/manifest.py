@@ -90,7 +90,6 @@ def build_metadata(video_path: Path, transcript: dict, build: dict,
             "dialogue": r["dialogue"],
         }
         f["yavg"] = r.get("yavg")
-        f["hash"] = r.get("hash")
         frames.append(f)
 
     rejected_out = []

@@ -7,7 +7,6 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import av
-import imagehash
 import numpy as np
 from PIL import Image
 
@@ -103,7 +102,3 @@ def load_audio_mono16k(path: Path) -> np.ndarray:
 def yavg(img_path: Path) -> float:
     img = Image.open(img_path).convert("L")
     return float(np.mean(np.asarray(img)))
-
-
-def phash(img_path: Path) -> imagehash.ImageHash:
-    return imagehash.phash(Image.open(img_path))

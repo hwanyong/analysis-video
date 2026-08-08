@@ -87,7 +87,7 @@ def render(out_dir: Path, title: str, unit_dir: Path | None = None) -> Path:
     for i, r in enumerate(records):
         idx = min(int(np.searchsorted(times, r["time"])), n - 1)
         color = STATUS_COLOR[r["status"]]
-        marker = "s" if "anchor-diff-pre" in r["sources"] else "^"
+        marker = "s" if "screen-end" in r["sources"] else "^"
         ax_v.plot(r["time"], anchor_s[idx], marker=marker, color=color, ms=8, zorder=5)
         ax_v.text(r["time"], anchor_s[idx], f" {i}", fontsize=6, va="bottom", color=color)
 

@@ -9,7 +9,6 @@ dependencies = [
     # 0.7부터 opencv-python(GUI판)이 하드 의존으로 바뀜 — headless extra가 있는 0.6.x 고정.
     # pip 최종 사용자에게도 headless만 설치되게 하는 유일한 선언적 방법 (결정 A10)
     "scenedetect[opencv-headless]>=0.6.4,<0.7",
-    "imagehash>=4.3",
     "scikit-image>=0.24",
     "Pillow>=10",
     # STT 백엔드 — 플랫폼별 자동 선택 (1순위 macOS Apple Silicon = MLX/Metal).

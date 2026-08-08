@@ -362,7 +362,7 @@ def cmd_status(args) -> int:
 def cmd_doctor(args) -> int:
     import platform as plat
     modules = {"pyav": "av", "scenedetect": "scenedetect", "opencv": "cv2",
-               "scikit-image": "skimage", "pillow": "PIL", "imagehash": "imagehash",
+               "scikit-image": "skimage", "pillow": "PIL",
                "numpy": "numpy", "matplotlib(viz)": "matplotlib",
                "mlx-whisper": "mlx_whisper", "faster-whisper": "faster_whisper"}
     checks = {name: find_spec(mod) is not None for name, mod in modules.items()}

@@ -68,11 +68,11 @@ AREA_FULL = 4.0     # cut_area == 4×임계에서 레인 천장
 
 SOURCE_COLORS = {
     "anchor-diff": (60, 160, 90),
-    "anchor-diff-pre": (40, 200, 190),
+    "screen-end": (40, 200, 190),
     "adaptive": (70, 130, 205),
     "initial": (150, 150, 150),
 }
-SOURCE_ORDER = ["adaptive", "anchor-diff-pre", "anchor-diff", "initial"]
+SOURCE_ORDER = ["adaptive", "screen-end", "anchor-diff", "initial"]
 
 MIN_SPAN = 2.0        # 최대 확대에서 보이는 시간 폭(초)
 ZOOM_STEPS = 1000     # 배율 슬라이더 해상도 (로그 눈금)
