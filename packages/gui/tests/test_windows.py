@@ -13,6 +13,24 @@ from analysis_video_gui.session import REGISTRY, Session
 ALL_WINDOWS = [wid for wid, _ in REGISTRY]
 
 
+class _ClickEvent:
+    """pyqtgraph 씬 클릭 이벤트 대역 — QTest로는 뷰박스 좌표를 지정할 수 없다."""
+
+    def __init__(self, timeline, t, modifiers):
+        from PySide6.QtCore import QPointF
+        self._mods = modifiers
+        self._pos = timeline._pw.getViewBox().mapViewToScene(QPointF(t, 5.5))
+
+    def button(self):
+        return Qt.MouseButton.LeftButton
+
+    def modifiers(self):
+        return self._mods
+
+    def scenePos(self):
+        return self._pos
+
+
 class _FakeWheel:
     """pyqtgraph 휠 이벤트 대역 — QTest에는 휠 시뮬레이터가 없다."""
 
@@ -248,6 +266,76 @@ def test_flag_dedupe_and_metrics(analyzed, qapp, pump):
         for _ in range(5):
             session.flags.add(session.engine.position())  # F 연타
         assert len(session.flags.flags) == 1
+    finally:
+        session.engine.shutdown()
+
+
+def test_flag_toggle_and_timeline_delete(analyzed, qapp, pump):
+    """만든 자리에서 취소되어야 한다 — 기입은 F/타임라인, 취소는 다른 창이면 막힌 것."""
+    video, out_dir = analyzed
+    session = Session(video, out_dir)
+    try:
+        session.open_window("timeline")
+        pump(0.6)
+        tl = session.windows["timeline"]
+
+        assert session.flags.toggle(3.0) is True
+        assert session.flags.times() == [3.0]
+        assert session.flags.toggle(3.05) is False, "같은 자리 재입력은 취소"
+        assert session.flags.times() == []
+
+        session.flags.toggle(2.0, "a")
+        session.flags.toggle(5.0, "b")
+        pump(0.3)
+
+        # 타임라인 ⇧클릭 = 그 자리 플래그 삭제 / 맨클릭 = seek
+        tl._on_click(_ClickEvent(tl, 5.02, Qt.KeyboardModifier.ShiftModifier))
+        pump(0.3)
+        assert session.flags.times() == [2.0]
+
+        tl._on_click(_ClickEvent(tl, 6.0, Qt.KeyboardModifier.NoModifier))
+        pump(0.5)
+        assert abs(session.engine.position() - 6.0) < 0.5
+        assert session.flags.times() == [2.0], "맨클릭은 플래그를 지우지 않는다"
+    finally:
+        session.engine.shutdown()
+
+
+def test_playhead_label_follows_programmatic_seek(analyzed, qapp, pump):
+    """커서 시각 라벨은 setPos가 내는 시그널로만 갱신된다 — 막으면 0.00s에 언다."""
+    video, out_dir = analyzed
+    session = Session(video, out_dir)
+    try:
+        session.open_window("timeline")
+        pump(0.6)
+        tl = session.windows["timeline"]
+        session.engine.seek(5.0)
+        pump(0.6)
+        assert "5." in tl._playhead.label.textItem.toPlainText()
+    finally:
+        session.engine.shutdown()
+
+
+def test_timeline_legend_reports_counts(analyzed, qapp, pump):
+    """비어 있는 레인이 '0건'인지 '숨김'인지 범례에서 구분되어야 한다."""
+    video, out_dir = analyzed
+    session = Session(video, out_dir)
+    try:
+        session.open_window("timeline")
+        pump(0.6)
+        tl = session.windows["timeline"]
+        text = tl._legend.text()
+        assert f"프레임 채택 {len(session.store.frames)}" in text
+        assert f"탈락 {len(session.store.rejected)} · 표시" in text, "기본 표시 상태"
+        assert "GT 플래그 0" in text
+
+        session.toggle_rejected()
+        pump(0.2)
+        assert "숨김" in tl._legend.text(), "숨긴 상태가 범례에 드러나야 한다"
+
+        session.flags.toggle(2.0)
+        pump(0.2)
+        assert "GT 플래그 1" in tl._legend.text()
     finally:
         session.engine.shutdown()
 

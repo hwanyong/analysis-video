@@ -1,8 +1,15 @@
 """타임라인 창 — YouTube 자막 편집기 방식의 멀티트랙 시간축 (pyqtgraph).
 
-트랙(위→아래): 채택 프레임 블록(폭=interval — 커버리지 구멍이 한눈에),
-탈락 후보 ✗(호버=사유), importance-point ★, STT 세그먼트, GT 플래그,
-anchor-diff 변화량 곡선(누적/순간+임계선).
+읽히는 그래프를 목표로 한다: 좌측 범례가 모든 색·기호의 뜻과 **현재 개수**를
+같이 들고 있어서, 비어 있는 레인이 "데이터가 0건"인지 "숨겼는지"를 화면에서
+바로 구분할 수 있다. 마우스를 올리면 그 시각의 프레임·대사·변화량 원값이
+판독 줄에 나온다.
+
+레인(위→아래): 채택 프레임(검출 근거별 색, 복합 근거는 흰 테두리), 탈락 후보 ✗,
+주문 추출 ◆, importance-point ★, STT 세그먼트, GT 플래그, 그리고 아래 절반이
+anchor-diff 진단 — 전환 구간 음영 위에 누적 diff와 순간 변화율을 각자의 기준선과
+함께 따로 쌓는다. 두 곡선은 읽는 방향이 반대다(누적은 넘겨야, 순간은 내려가야
+트리거) — 겹쳐 그리면 해독이 불가능해서 분리했다.
 
 드래그의 의미는 도구가 정한다. 기본은 스크럽 — 검토 작업의 대부분이 시간축을
 훑는 일이라 드래그가 곧 재생 위치 이동이어야 하고, 화면은 놓기 전에 따라와야
@@ -15,14 +22,41 @@ import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import QEvent, Qt
 from PySide6.QtWidgets import (QButtonGroup, QHBoxLayout, QLabel, QSlider, QToolButton,
-                               QVBoxLayout)
+                               QVBoxLayout, QWidget)
 
 from ..session import Session
-from . import ChildWindow
+from . import ChildWindow, fmt_time
 
-LANE_TICKS = [(5.45, "프레임"), (4.5, "탈락"), (3.9, "points"),
-              (3.3, "STT"), (2.4, "플래그"), (1.0, "변화량")]
-Y_RANGE = (0.0, 6.3)
+# ---------- 레인 기하 (y는 0=바닥, 위로 증가) ----------
+Y_RANGE = (0.0, 9.0)
+LANE_FRAMES = (7.95, 8.85)
+LANE_REJECTED = 7.5
+LANE_REQUESTED = 7.05
+LANE_POINTS = 6.6
+LANE_STT = (5.95, 6.3)
+LANE_FLAGS = 5.5
+LANE_CUM = (2.7, 4.6)      # 누적 diff — 기준선을 넘겨야 트리거 후보
+LANE_RATE = (0.3, 2.2)     # 순간 변화율 — 기준선 아래로 내려가야 트리거
+DIFF_BAND = (LANE_RATE[0], LANE_CUM[1])   # 전환 구간 음영이 덮는 범위
+
+LANE_TICKS = [
+    (sum(LANE_FRAMES) / 2, "프레임"), (LANE_REJECTED, "탈락"),
+    (LANE_REQUESTED, "주문"), (LANE_POINTS, "points"),
+    (sum(LANE_STT) / 2, "STT"), (LANE_FLAGS, "플래그"),
+    (sum(LANE_CUM) / 2, "누적 diff"), (sum(LANE_RATE) / 2, "순간 변화율"),
+]
+
+# 정규화 배율: 임계값이 각 레인의 이 비율 위치에 오도록 잡는다
+CUM_FULL = 4.0    # cum == 4×임계에서 레인 천장
+RATE_FULL = 6.0   # rate == 6×임계에서 레인 천장
+
+SOURCE_COLORS = {
+    "anchor-diff": (60, 160, 90),
+    "adaptive": (70, 130, 205),
+    "importance-point": (230, 194, 41),
+    "initial": (150, 150, 150),
+}
+SOURCE_ORDER = ["importance-point", "adaptive", "anchor-diff", "initial"]
 
 MIN_SPAN = 2.0        # 최대 확대에서 보이는 시간 폭(초)
 ZOOM_STEPS = 1000     # 배율 슬라이더 해상도 (로그 눈금)
@@ -42,6 +76,10 @@ TOOL_CURSOR = {
     "zoom": Qt.CursorShape.CrossCursor,
 }
 COMMON_HINT = "휠 = 확대·축소 · Space 홀드+드래그 = 임시 이동"
+
+
+def _swatch(color: tuple, glyph: str = "■") -> str:
+    return f"<span style='color:rgb{color[:3]}'>{glyph}</span>"
 
 
 class _TimelineViewBox(pg.ViewBox):
@@ -74,7 +112,7 @@ class TimelineWindow(ChildWindow):
     def __init__(self, session: Session):
         super().__init__()
         self.session = session
-        self.resize(1400, 400)
+        self.resize(1500, 520)
 
         self._tool = "scrub"
         self._space_held = False
@@ -82,34 +120,50 @@ class TimelineWindow(ChildWindow):
         self._dragging = False       # 재생 커서를 직접 잡고 있는가
         self._syncing_zoom = False
 
-        layout = QVBoxLayout(self)
-        layout.addLayout(self._build_toolbar())
+        outer = QVBoxLayout(self)
+        outer.addLayout(self._build_toolbar())
 
+        body = QHBoxLayout()
+        body.addWidget(self._build_legend())
+
+        plot_col = QVBoxLayout()
         vb = _TimelineViewBox(self)
         self._pw = pg.PlotWidget(background="#181818", viewBox=vb)
-        layout.addWidget(self._pw, stretch=1)
+        plot_col.addWidget(self._pw, stretch=1)
+        self._readout = QLabel("마우스를 올리면 그 시각의 내용이 여기 나옵니다")
+        self._readout.setStyleSheet("color:#aaa; padding:2px 4px;")
+        self._readout.setTextFormat(Qt.TextFormat.RichText)
+        plot_col.addWidget(self._readout)
+        body.addLayout(plot_col, stretch=1)
+        outer.addLayout(body, stretch=1)
+
         vb.setLimits(yMin=Y_RANGE[0] - 0.4, yMax=Y_RANGE[1] + 0.4)
         self._pw.setYRange(*Y_RANGE, padding=0)
         self._pw.getAxis("left").setTicks([LANE_TICKS])
         self._pw.setLabel("bottom", "시간(초)")
 
-        self._playhead = pg.InfiniteLine(pos=0, angle=90, movable=True,
-                                         pen=pg.mkPen("#ff5555", width=2))
+        self._playhead = pg.InfiniteLine(
+            pos=0, angle=90, movable=True, pen=pg.mkPen("#ff5555", width=2),
+            label="{value:0.2f}s", labelOpts={"position": 0.02, "color": "#ff8888",
+                                              "movable": False, "fill": (24, 24, 24, 200)})
         self._playhead.setHoverPen(pg.mkPen("#ffaaaa", width=4))
         self._playhead.sigDragged.connect(self._on_playhead_drag)
         self._playhead.sigPositionChangeFinished.connect(self._on_playhead_drop)
 
-        self._flags_item = pg.ScatterPlotItem(symbol="t", size=13, brush="#ff8c00", pen=None)
+        self._flags_item = pg.ScatterPlotItem(symbol="t", size=13, brush="#ff8c00",
+                                              pen=None, hoverable=True,
+                                              tip=lambda x, y, data: data)
         self._rejected_item = pg.ScatterPlotItem(symbol="x", size=9, brush="#bb5555",
                                                  pen=None, hoverable=True,
                                                  tip=lambda x, y, data: data)
 
         self._build()
         self.bind(session.store.reloaded, self._build)
-        self.bind(session.flags.changed, self._update_flags)
+        self.bind(session.flags.changed, self._on_flags_changed)
         self.bind(session.showRejectedChanged, self._on_show_rejected)
         self.bind(session.engine.positionChanged, self._on_pos)
         self._pw.scene().sigMouseClicked.connect(self._on_click)
+        self._pw.scene().sigMouseMoved.connect(self._on_hover)
         vb.sigXRangeChanged.connect(self._sync_zoom_ui)
 
     # ---------- 도구 막대 ----------
@@ -138,7 +192,7 @@ class TimelineWindow(ChildWindow):
 
         self._zoom_slider = QSlider(Qt.Orientation.Horizontal)
         self._zoom_slider.setRange(0, ZOOM_STEPS)
-        self._zoom_slider.setFixedWidth(220)
+        self._zoom_slider.setFixedWidth(200)
         self._zoom_slider.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._zoom_slider.setToolTip("전체 보기 ↔ 최대 확대")
         self._zoom_slider.valueChanged.connect(self._on_zoom_slider)
@@ -163,6 +217,60 @@ class TimelineWindow(ChildWindow):
         b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         b.clicked.connect(lambda: cb())
         return b
+
+    # ---------- 범례 ----------
+
+    def _build_legend(self) -> QWidget:
+        box = QWidget()
+        box.setFixedWidth(230)
+        # 그래프를 설명하는 패널이므로 그래프와 같은 배경 — 시선이 두 번 적응하지 않게
+        box.setStyleSheet("background:#181818; color:#ddd;")
+        lay = QVBoxLayout(box)
+        lay.setContentsMargins(8, 4, 6, 4)
+        lay.setSpacing(1)
+        self._legend = QLabel()
+        self._legend.setTextFormat(Qt.TextFormat.RichText)
+        self._legend.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self._legend.setWordWrap(True)
+        lay.addWidget(self._legend)
+        lay.addStretch(1)
+        return box
+
+    def _update_legend(self) -> None:
+        st = self.session.store
+        counts = st.source_counts()
+        rej_state = "표시" if self.session.show_rejected else "<b>숨김</b> · R"
+        rows = [f"<b>프레임 채택 {len(st.frames)}</b>"]
+        rows += [f"&nbsp;{_swatch(SOURCE_COLORS[s])} {s} {counts.get(s, 0)}"
+                 for s in SOURCE_ORDER]
+        rows.append("&nbsp;<span style='color:#eee'>▭</span> 흰 테두리 = 복합 근거")
+        rows.append("")
+        rows += [
+            f"{_swatch((187, 85, 85), '✗')} 탈락 {len(st.rejected)} · {rej_state}",
+            f"{_swatch((200, 140, 255), '◆')} 주문 추출 {len(st.requested)}"
+            + ("" if st.requested else " <span style='color:#777'>(frame --at)</span>"),
+            f"{_swatch((230, 194, 41), '★')} points {len(st.point_times)}",
+            f"{_swatch((150, 150, 150), '▬')} STT 세그먼트 {len(st.segments)}",
+            f"{_swatch((255, 140, 0), '▲')} GT 플래그 {len(self.session.flags.flags)}",
+            "<span style='color:#888'>&nbsp;“이 장면은 뽑혔어야 한다”는 사람의 정답."
+            " F로 추가/취소, ▼ ⇧클릭 삭제. ⑥ 비교 리포트가 이것과 검출을 대조해"
+            " recall·precision을 낸다.</span>",
+            "",
+        ]
+        if st.series is not None:
+            cth = st.series["cum_threshold"]
+            rth = st.series["rate_threshold"]
+            rows += [
+                f"{_swatch((110, 110, 160), '▬')} 전환 구간 {len(st.transitions)}",
+                f"{_swatch((90, 160, 255), '━')} 누적 diff",
+                f"&nbsp;&nbsp;<span style='color:#f55'>┈</span> {cth} <b>넘으면</b> 후보",
+                f"{_swatch((255, 160, 60), '━')} 순간 변화율",
+                f"&nbsp;&nbsp;<span style='color:#f55'>┈</span> {rth} <b>아래로</b> 내려가면 트리거",
+            ]
+        else:
+            rows.append("<span style='color:#777'>detect_anchor.npz 없음 —"
+                        " 변화량 미표시</span>")
+        self._legend.setText("<br>".join(rows))
 
     # ---------- 도구 ----------
 
@@ -255,6 +363,15 @@ class TimelineWindow(ChildWindow):
 
     # ---------- 구성 ----------
 
+    @staticmethod
+    def _frame_style(sources: list[str]) -> tuple:
+        """복합 근거는 흰 테두리로 구분 — 색은 우선순위가 가장 높은 근거를 쓴다."""
+        primary = next((s for s in SOURCE_ORDER if s in sources),
+                       sources[0] if sources else "initial")
+        color = SOURCE_COLORS.get(primary, (120, 120, 120))
+        pen = pg.mkPen("#ffffff", width=2) if len(sources) > 1 else pg.mkPen(color)
+        return pg.mkBrush(*color, 190), pen
+
     def _build(self) -> None:
         st = self.session.store
         self._pw.clear()
@@ -262,61 +379,142 @@ class TimelineWindow(ChildWindow):
         self._pw.setLimits(xMin=-duration * 0.02, xMax=duration * 1.02)
         self._pw.setXRange(0, duration, padding=0.01)
 
+        # 레인 경계 — 이산 마크 영역과 변화량 영역, 그리고 두 곡선 사이를 가른다.
+        # 경계가 없으면 곡선 스파이크가 위 레인의 마크처럼 읽힌다(구 레이아웃의 결함).
+        for y in ((LANE_FLAGS + LANE_CUM[1]) / 2, (LANE_CUM[0] + LANE_RATE[1]) / 2):
+            self._pw.addItem(pg.InfiniteLine(pos=y, angle=0, movable=False,
+                                             pen=pg.mkPen((70, 70, 70), width=1)))
+
+        if st.transitions:
+            # 변화량 레인 전체를 덮는 음영 — 곡선이 이 구간 안에서 오르내리다
+            # 안정되어 트리거된 것이 보인다
+            self._pw.addItem(pg.BarGraphItem(
+                x0=[a for a, _ in st.transitions],
+                x1=[max(b, a + duration * 0.0004) for a, b in st.transitions],
+                y0=DIFF_BAND[0], y1=DIFF_BAND[1],
+                brush=(110, 110, 160, 55), pen=None))
+
         if st.frames:
             starts = np.array([f["interval"][0] for f in st.frames])
             ends = np.array([f["interval"][1] for f in st.frames])
+            styles = [self._frame_style(f["sources"]) for f in st.frames]
             self._pw.addItem(pg.BarGraphItem(
                 x0=starts, x1=np.maximum(ends, starts + duration * 0.001),
-                y0=5.0, y1=5.9, brush=(60, 160, 90, 170), pen=pg.mkPen("#2a5")))
+                y0=LANE_FRAMES[0], y1=LANE_FRAMES[1],
+                brushes=[b for b, _ in styles], pens=[p for _, p in styles]))
 
         self._rejected_item.setData(
-            [r["time"] for r in st.rejected], [4.5] * len(st.rejected),
+            [r["time"] for r in st.rejected], [LANE_REJECTED] * len(st.rejected),
             data=[f"t={r['time']} {r['reject_reason']}" for r in st.rejected])
         self._rejected_item.setVisible(self.session.show_rejected)
         self._pw.addItem(self._rejected_item)
 
+        if st.requested:
+            self._pw.addItem(pg.ScatterPlotItem(
+                x=[r["time"] for r in st.requested],
+                y=[LANE_REQUESTED] * len(st.requested),
+                symbol="d", size=13, brush="#c88cff", pen=None))
+
         if st.point_times:
             self._pw.addItem(pg.ScatterPlotItem(
-                x=st.point_times, y=[3.9] * len(st.point_times),
+                x=st.point_times, y=[LANE_POINTS] * len(st.point_times),
                 symbol="star", size=14, brush="#e6c229", pen=None))
 
         if st.segments:
             self._pw.addItem(pg.BarGraphItem(
                 x0=[s["start"] for s in st.segments], x1=[s["end"] for s in st.segments],
-                y0=3.0, y1=3.6, brush=(130, 130, 130, 110), pen=None))
+                y0=LANE_STT[0], y1=LANE_STT[1], brush=(130, 130, 130, 110), pen=None))
 
         if st.series is not None:
-            times, cum, rate = st.series["times"], st.series["cum"], st.series["rate"]
-            cth, rth = st.series["cum_threshold"], st.series["rate_threshold"]
-            cum_n = 2.0 * np.clip(cum / (4 * cth), 0, 1)
-            rate_n = 1.0 * np.clip(rate / (6 * rth), 0, 1)
-            self._pw.addItem(pg.PlotDataItem(times, cum_n, pen=pg.mkPen((90, 160, 255), width=1),
-                                             autoDownsample=True))
-            self._pw.addItem(pg.PlotDataItem(times, rate_n, pen=pg.mkPen((255, 160, 60, 140)),
-                                             autoDownsample=True))
-            self._pw.addItem(pg.InfiniteLine(pos=0.5, angle=0,
-                                             pen=pg.mkPen("#f55", style=Qt.PenStyle.DashLine)))
+            self._plot_diff(st)
 
         self._update_flags()
         self._pw.addItem(self._flags_item)
         self._pw.addItem(self._playhead)
         self._apply_tool()
         self._sync_zoom_ui()
+        self._update_legend()
+
+    def _plot_diff(self, st) -> None:
+        """누적 diff와 순간 변화율을 각자의 레인에 기준선과 함께 쌓는다.
+
+        겹쳐 그리면 안 되는 이유: 트리거 조건이 `누적 > 임계` **그리고**
+        `순간변화율 ≤ 임계`라 두 곡선의 읽는 방향이 반대다."""
+        s = st.series
+        times, cth, rth = s["times"], s["cum_threshold"], s["rate_threshold"]
+        for series, thr, lane, full, color, label in (
+                (s["cum"], cth, LANE_CUM, CUM_FULL, (90, 160, 255), f"{cth} ↑ 넘으면"),
+                (s["rate"], rth, LANE_RATE, RATE_FULL, (255, 160, 60), f"{rth} ↓ 내려가면")):
+            lo, hi = lane
+            self._pw.addItem(pg.PlotDataItem(
+                times, lo + (hi - lo) * np.clip(series / (full * thr), 0, 1),
+                pen=pg.mkPen(color, width=1), autoDownsample=True))
+            self._pw.addItem(pg.InfiniteLine(
+                pos=lo + (hi - lo) / full, angle=0,
+                pen=pg.mkPen("#f55", style=Qt.PenStyle.DashLine),
+                label=label,
+                # 기본 앵커는 가운데 정렬이라 왼쪽 끝에 두면 절반이 잘린다
+                labelOpts={"position": 0.004, "color": "#f88", "movable": False,
+                           "fill": (24, 24, 24, 200), "anchors": [(0, 1), (0, 1)]}))
 
     def _update_flags(self) -> None:
-        times = self.session.flags.times()
-        self._flags_item.setData(times, [2.4] * len(times))
+        flags = self.session.flags.flags
+        self._flags_item.setData(
+            [f["time"] for f in flags], [LANE_FLAGS] * len(flags),
+            data=[f"GT {fmt_time(f['time'])}"
+                  + (f" — {f['note']}" if f.get("note") else "")
+                  + "  (⇧클릭 = 삭제)" for f in flags])
+
+    def _on_flags_changed(self) -> None:
+        self._update_flags()
+        self._update_legend()
 
     def _on_show_rejected(self, show: bool) -> None:
         self._rejected_item.setVisible(show)
+        self._update_legend()
+
+    # ---------- 판독 ----------
+
+    def _on_hover(self, scene_pos) -> None:
+        vb = self._pw.getViewBox()
+        if not self._pw.sceneBoundingRect().contains(scene_pos):
+            return
+        t = float(vb.mapSceneToView(scene_pos).x())
+        st = self.session.store
+        if not 0 <= t <= st.duration:
+            self._readout.setText("<span style='color:#777'>영상 범위 밖</span>")
+            return
+
+        parts = [f"<b>t={t:.2f}</b> ({fmt_time(t)})"]
+        i = st.frame_index_at(t)
+        if i is not None and st.frames:
+            f = st.frames[i]
+            marks = "".join(_swatch(SOURCE_COLORS.get(s, (150, 150, 150))) for s in f["sources"])
+            parts.append(f"{marks} 프레임 #{i} t={f['time']} · {'+'.join(f['sources'])}")
+        j = st.segment_index_at(t)
+        if j is not None:
+            text = st.segments[j]["text"].strip()
+            parts.append(f"<span style='color:#ccc'>“{text[:70]}”</span>")
+        sv = st.series_at(t)
+        if sv is not None:
+            cum, rate = sv
+            cth, rate_th = st.series["cum_threshold"], st.series["rate_threshold"]
+            parts.append(
+                f"<span style='color:#6af'>누적 {cum:.4f}</span>"
+                f"{'↑' if cum > cth else ''} · "
+                f"<span style='color:#fa6'>순간 {rate:.6f}</span>"
+                f"{'' if rate > rate_th else '↓'}")
+        self._readout.setText(" &nbsp;|&nbsp; ".join(parts))
 
     # ---------- 동기 ----------
 
     def _on_pos(self, t: float) -> None:
         if not self._dragging:
-            self._playhead.blockSignals(True)
+            # blockSignals를 걸면 안 된다 — 커서에 붙은 시각 라벨이 setPos가 내는
+            # sigPositionChanged로만 갱신되므로, 막으면 드래그로 옮길 때 말고는
+            # 라벨이 0.00s에 얼어붙는다. 우리가 받는 시그널(sigDragged /
+            # sigPositionChangeFinished)은 setPos가 내지 않으므로 되먹임도 없다.
             self._playhead.setPos(t)
-            self._playhead.blockSignals(False)
 
     def scrub_drag(self, ev, t: float) -> None:
         """뷰박스 위 좌드래그 = 재생 위치 실시간 이동."""
@@ -342,5 +540,14 @@ class TimelineWindow(ChildWindow):
             return
         p = self._pw.getViewBox().mapSceneToView(ev.scenePos())
         t = float(p.x())
-        if 0 <= t <= self.session.store.duration:
-            self.session.engine.seek(t)
+        if not 0 <= t <= self.session.store.duration:
+            return
+        if ev.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+            # 찍은 자리에서 바로 지울 수 있어야 한다 — 화면 폭에 비례한 허용오차로
+            # 잡아야 확대 배율과 무관하게 "눈에 보이는 ▼"를 집을 수 있다
+            (x0, x1), _ = self._pw.getViewBox().viewRange()
+            i = self.session.flags.index_at(t, within=max((x1 - x0) * 0.01, 0.2))
+            if i is not None:
+                self.session.flags.remove(i)
+            return
+        self.session.engine.seek(t)

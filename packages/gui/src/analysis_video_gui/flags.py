@@ -1,7 +1,10 @@
 """사용자 GT(ground truth) 플래그 — "여기서 이미지가 추출됐어야 한다"는 사람의 기준.
 
-user_flags.json에 저장하고, 로직 검출(채택 프레임)과 허용오차 내 매칭해
-precision/recall을 산출한다. 초기 기획의 "사용자 플래그 vs 로직 추출 비교" 요건.
+로직(anchor-diff·adaptive·importance-point)이 뽑은 프레임이 옳은지는 로직 자신이
+판정할 수 없다. 사람이 영상을 보며 "이 장면은 반드시 필요하다"를 찍어 두면,
+그것이 정답지(ground truth)가 되어 검출 결과와 허용오차 내 매칭된다 —
+놓친 것은 recall, 쓸데없이 뽑은 것은 precision으로 나온다. 임계값 튜닝을
+감이 아니라 수치로 하기 위한 장치다. user_flags.json에 저장된다.
 """
 import json
 from pathlib import Path
@@ -42,6 +45,25 @@ class FlagStore(QObject):
         if 0 <= index < len(self.flags):
             del self.flags[index]
             self._save()
+
+    def index_at(self, time: float, within: float = 0.6) -> int | None:
+        """time에서 within 안의 최근접 플래그 — 없으면 None."""
+        if not self.flags:
+            return None
+        i = min(range(len(self.flags)), key=lambda i: abs(self.flags[i]["time"] - time))
+        return i if abs(self.flags[i]["time"] - time) <= within else None
+
+    def toggle(self, time: float, note: str = "", within: float = 0.6) -> bool:
+        """근처에 이미 있으면 제거, 없으면 추가 — 만든 자리에서 바로 취소된다.
+
+        기입 수단(F키·타임라인)과 취소 수단이 다른 창에 있으면 되돌릴 길이
+        없는 것과 같다. 반환값은 '추가되었는가'."""
+        i = self.index_at(time, within)
+        if i is not None:
+            self.remove(i)
+            return False
+        self.add(time, note)
+        return True
 
     def times(self) -> list[float]:
         return [f["time"] for f in self.flags]

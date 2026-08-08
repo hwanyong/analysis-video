@@ -36,7 +36,7 @@ class CompareWindow(ChildWindow):
         self._tol.valueChanged.connect(self._recompute)
         top.addWidget(self._tol)
         top.addStretch()
-        add_btn = QPushButton("현재 시각에 플래그 (F)")
+        add_btn = QPushButton("현재 시각 플래그 추가/제거 (F)")
         add_btn.clicked.connect(self._add_flag_here)
         del_btn = QPushButton("선택 삭제")
         del_btn.clicked.connect(self._delete_selected)
@@ -67,7 +67,7 @@ class CompareWindow(ChildWindow):
         self._recompute()
 
     def _add_flag_here(self) -> None:
-        self.session.flags.add(self.session.engine.position())
+        self.session.flags.toggle(self.session.engine.position())
 
     def _on_cell_clicked(self, row: int, _col: int) -> None:
         # 테이블은 항상 flags 배열 순서(시간 오름차순)로 채워지므로 인덱스가 일치한다

@@ -56,7 +56,9 @@ class Session(QObject):
         self.engine = PlayerEngine(video_path, self.store.duration)
         self.flags = FlagStore(out_dir)
         self.settings = QSettings("analysis-video", "gui")
-        self.show_rejected = False
+        # 탈락 후보는 기본 표시 — "왜 안 뽑혔나"가 검토의 절반이고, 실측 탈락 수는
+        # 채택의 1/5 수준이라 화면을 어지럽히지 않는다. R로 끈다.
+        self.show_rejected = True
         self.windows: dict[str, object] = {}
         self.router = ShortcutRouter(self)
 
