@@ -65,8 +65,12 @@ def _write_video(path: Path, seconds: float, audio_seconds: float | None,
             out.mux(p)
 
     if a is not None:
-        t = np.linspace(0, audio_seconds, int(audio_seconds * 48000), endpoint=False)
-        pcm = (0.2 * np.sin(2 * np.pi * 440 * t)).astype(np.float32)
+        # **무음이어야 한다.** 재생 테스트는 진짜 오디오 장치를 연다(오디오 클록이
+        # 재생 마스터라 대역으로 바꾸면 검증할 것이 없어진다) — 즉 스피커로 그대로
+        # 나간다. 예전에는 440Hz 사인파였는데 그게 정확히 경고음('라' 음)이라
+        # 테스트를 돌릴 때마다 삐 소리가 났다. 클록은 재생된 **샘플 수**를 세지
+        # 진폭을 보지 않으므로 무음으로 두어도 잃는 검증이 없다 — 소리를 넣지 말 것.
+        pcm = np.zeros(int(audio_seconds * 48000), dtype=np.float32)
         resampler = av.AudioResampler(format="fltp", layout="mono", rate=48000)
         af = av.AudioFrame.from_ndarray(pcm.reshape(1, -1), format="flt", layout="mono")
         af.sample_rate = 48000
