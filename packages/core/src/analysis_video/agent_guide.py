@@ -9,7 +9,7 @@ GUIDE = """\
 # analysis-video — Agent Guide
 
 Converts a slide-based lecture video into AI-consumable context:
-scene frame images + dialogue timeline + a merged `metadata.json`.
+scene frame images + dialogue timeline + a compact `context.md` for you to read.
 
 ## Pipeline contract (STRICT ORDER — enforced with exit code 3)
 
@@ -22,8 +22,9 @@ scene frame images + dialogue timeline + a merged `metadata.json`.
    This "text importance analysis" step is deliberately NOT in the tool.
 3. analysis-video frames <video> --points points.json
      Scene-change detection + captures at your points + quality gates.
-     Writes metadata.json. Refuses to run before transcribe.
-4. Read metadata.json. Each frame bundles {time, image, dialogue}.
+     Writes context.md (for you) and metadata.json (full record).
+     Refuses to run before transcribe.
+4. Read context.md. Each section is one screen: {period, image(s), dialogue}.
 ```
 
 If no moment is important, you must opt out explicitly: `frames <video> --no-points`.
@@ -51,7 +52,7 @@ If no moment is important, you must opt out explicitly: `frames <video> --no-poi
 | `analyze <video>` | split + transcribe, stop for points (add `--points P.json` to run everything) |
 | `split <video>` | audio.wav + video.mkv |
 | `transcribe <video> [--model tiny..large,turbo] [--language ko] [--force]` | transcript.json; `--force` re-runs (e.g. model change) |
-| `frames <video> --points P.json \\| --no-points` | detection + capture + metadata.json |
+| `frames <video> --points P.json \\| --no-points` | detection + capture + context.md |
 | `frame <video> --at 421.8 --reason "..."` | one extra on-demand frame after the fact (idempotent per at+reason) |
 | `status <video>` | stage completion state |
 | `doctor` | environment / STT backend report (exit 4 if no backend usable) |
@@ -72,7 +73,7 @@ If no moment is important, you must opt out explicitly: `frames <video> --no-poi
 - stderr: human-readable progress logs. Ignore for parsing.
 - Exit codes: 0 ok · 1 internal · 2 bad input · 3 stage-order violation ·
   4 missing dependency/backend.
-- Images are returned as file PATHS in metadata.json — read the ones you need.
+- Images are referenced as file PATHS in context.md — open the ones you need.
 
 ## Timeouts / resume
 
@@ -99,8 +100,16 @@ prefer a harness timeout of 10 minutes, or re-invoke until it completes
 ├── detect_adaptive.json  # adaptive detector cache (resume)
 ├── frames.json           # every candidate with accept/reject verdict
 ├── debug_graph.png       # from `debug-report` (optional)
-└── metadata.json         # FINAL: frames[{time, image, sources, interval,
-                          #   dialogue, reasons?, point_times?, trigger_dialogue?}]
-                          #   + rejected[] + requested[] + transcript + params
+├── context.md            # ★ READ THIS. One section per screen: the period it was
+│                         #   on display, its image(s), and the dialogue spoken then.
+│                         #   ~17% the tokens of metadata.json, same information for
+│                         #   your purpose. A screen may hold several images (the
+│                         #   fresh state when it appeared, the completed state just
+│                         #   before it changed) — they share one dialogue block.
+└── metadata.json         # FULL RECORD, for auditing the detector — not for reading
+                          #   end to end. frames[{time, image, sources, screen,
+                          #   interval, dialogue, reasons?, point_times?,
+                          #   trigger_dialogue?}] + rejected[] (why each candidate
+                          #   was dropped) + requested[] + transcript + params
 ```
 """

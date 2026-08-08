@@ -74,7 +74,8 @@ def invalidate_stage(state: dict, stage: str) -> None:
     state["stages"].pop(stage, None)
 
 
-def build_metadata(video_path: Path, transcript: dict, build: dict) -> dict:
+def build_metadata(video_path: Path, transcript: dict, build: dict,
+                   screens: list[tuple[float, float]] | None = None) -> dict:
     accepted = [r for r in build["records"] if r["status"] == "accepted"]
     rejected = [r for r in build["records"] if r["status"] == "rejected"]
 
@@ -84,6 +85,7 @@ def build_metadata(video_path: Path, transcript: dict, build: dict) -> dict:
             "time": round(r["time"], 2),
             "image": r["image"],
             "sources": r["sources"],
+            "screen": r["screen"],
             "interval": r["interval"],
             "dialogue": r["dialogue"],
         }
@@ -100,6 +102,7 @@ def build_metadata(video_path: Path, transcript: dict, build: dict) -> dict:
     rejected_out = []
     for r in rejected:
         entry: dict = {"time": round(r["time"], 2), "sources": r["sources"],
+                       "screen": r.get("screen"),
                        "reject_reason": r["reject_reason"], "image": r.get("image")}
         # 탈락해도 importance-point의 근거는 metadata에 남긴다 — 계약(보존 약속) 이행
         if r.get("reasons"):
@@ -118,6 +121,10 @@ def build_metadata(video_path: Path, transcript: dict, build: dict) -> dict:
             "duration": round(build["duration"], 2),
             "fps": build["fps"],
         },
+        # 화면 구간 목록 — 이미지가 하나도 없는 화면도 여기엔 남는다.
+        # 이것이 없으면 후보가 전부 탈락한 화면이 기록에서 사라져 그동안의
+        # 대사까지 함께 소실된다(실측 유실 최대 64%).
+        "screens": [[round(a, 2), round(b, 2)] for a, b in (screens or [])],
         "frames": frames,
         "rejected": rejected_out,
         "transcript": {

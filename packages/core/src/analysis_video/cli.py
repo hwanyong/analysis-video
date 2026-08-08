@@ -15,7 +15,7 @@ import sys
 from importlib.util import find_spec
 from pathlib import Path
 
-from . import __version__, align, errors, manifest, media, stt
+from . import __version__, align, context, errors, manifest, media, stt
 from . import frames as frames_mod
 from . import points as points_mod
 from . import split as split_mod
@@ -134,19 +134,22 @@ def run_frames(video: Path, out_dir: Path, points_path: Path | None) -> dict:
         shutil.rmtree(frames_dir)
 
     build = frames_mod.build_frames(video_src, out_dir, pts)
-    align.attach_dialogue(build["records"], transcript["segments"], build["duration"])
+    screens = align.attach_dialogue(build["records"], transcript["segments"],
+                                    build["duration"], build["anchor_events"])
 
     manifest.write_json_atomic(out_dir / "frames.json", {
         "records": build["records"], "anchor_events": build["anchor_events"],
         "params": build["params"]})
 
-    metadata = manifest.build_metadata(video, transcript, build)
+    metadata = manifest.build_metadata(video, transcript, build, screens)
     _merge_requested(out_dir, metadata)
     manifest.save_metadata(out_dir, metadata)
+    context_path = context.write(out_dir, metadata, video.name)
 
     n_accepted = sum(1 for r in build["records"] if r["status"] == "accepted")
     outputs = {
         "metadata": str(out_dir / "metadata.json"),
+        "context": str(context_path),
         "frames_dir": str(frames_dir),
         "n_accepted": n_accepted,
         "n_rejected": len(build["records"]) - n_accepted,
@@ -163,14 +166,25 @@ def _requests_path(out_dir: Path) -> Path:
 
 def _recompute_request(entry: dict, metadata: dict) -> None:
     """requested 엔트리의 구간·대사를 현재 프레임 집합 기준으로 계산한다 —
-    frames 재실행으로 프레임 집합이 바뀌어도 장부가 stale해지지 않게."""
+    frames 재실행으로 프레임 집합이 바뀌어도 장부가 stale해지지 않게.
+
+    구간은 프레임과 **같은 정의**(화면이 떠 있던 구간)를 써야 한다. 여기서만
+    이웃 프레임 시각으로 따로 계산하면 같은 시각에 두 가지 대사 묶음이 생긴다."""
     segments = metadata["transcript"]["segments"]
     duration = metadata["source"]["duration"]
-    accepted_times = [f["time"] for f in metadata["frames"]]
-    prev_t = max((t for t in accepted_times if t <= entry["time"]), default=0.0)
-    next_t = min((t for t in accepted_times if t > entry["time"]), default=duration)
-    entry["interval"] = [round(prev_t, 2), round(next_t, 2)]
-    entry["dialogue"] = align.segments_in(segments, prev_t, next_t)
+    t = entry["time"]
+    frames = metadata["frames"]
+    holder = next((f for f in frames if f["interval"][0] <= t < f["interval"][1]), None)
+    if holder is None and frames:
+        # 전환 구간(화면과 화면 사이, 실측 0.07초)에 떨어진 경우 — 가장 가까운 화면
+        holder = min(frames, key=lambda f: min(abs(f["interval"][0] - t),
+                                               abs(f["interval"][1] - t)))
+    if holder is not None:
+        entry["interval"] = list(holder["interval"])
+        entry["dialogue"] = holder["dialogue"]
+    else:
+        entry["interval"] = [0.0, round(duration, 2)]
+        entry["dialogue"] = align.segments_in(segments, 0.0, duration)
     seg = align.find_segment_at(segments, entry["at"])
     entry["trigger_dialogue"] = [seg] if seg else []
 
@@ -262,7 +276,9 @@ def cmd_frames(args) -> int:
     points_path = None if args.no_points else args.points
     r = run_frames(video, out_dir, points_path)
     emit({"ok": True, "out_dir": str(out_dir), **r,
-          "next": "metadata.json의 frames[]에서 필요한 이미지(경로)를 읽으세요"})
+          "next": "context.md를 읽으세요 — 화면별로 이미지·시간·대사만 담은 AI용"
+                  " 산출물입니다. 탈락 사유·검출 파라미터 등 전체 기록이 필요하면"
+                  " metadata.json을 보세요"})
     return EXIT_OK
 
 

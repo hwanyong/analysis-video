@@ -453,11 +453,23 @@ class TimelineWindow(ChildWindow):
                 brush=(110, 110, 160, 55), pen=None))
 
         if st.frames:
-            starts = np.array([f["interval"][0] for f in st.frames])
-            ends = np.array([f["interval"][1] for f in st.frames])
+            # interval은 '화면이 떠 있던 구간'이라 같은 화면의 이미지들(등장 직후·
+            # 사라지기 직전)이 같은 값을 갖는다. 그대로 그리면 막대가 정확히
+            # 포개져 뒤의 것만 보이고 앞의 것은 클릭도 안 된다 — 표시에 한해
+            # 구간을 이미지 수만큼 나눠 나란히 놓는다(데이터는 건드리지 않는다).
+            share: dict[tuple, list[int]] = {}
+            for i, f in enumerate(st.frames):
+                share.setdefault(tuple(f["interval"]), []).append(i)
+            x0 = [0.0] * len(st.frames)
+            x1 = [0.0] * len(st.frames)
+            for (a, b), idxs in share.items():
+                w = (b - a) / len(idxs)
+                for k, i in enumerate(idxs):
+                    x0[i], x1[i] = a + w * k, a + w * (k + 1)
             styles = [self._frame_style(f["sources"]) for f in st.frames]
+            x0 = np.array(x0)
             self._pw.addItem(pg.BarGraphItem(
-                x0=starts, x1=np.maximum(ends, starts + duration * 0.001),
+                x0=x0, x1=np.maximum(np.array(x1), x0 + duration * 0.001),
                 y0=LANE_FRAMES[0], y1=LANE_FRAMES[1],
                 brushes=[b for b, _ in styles], pens=[p for _, p in styles]))
 

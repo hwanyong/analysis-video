@@ -52,6 +52,12 @@ def stub_pipeline(monkeypatch, tmp_path):
     # 중복 게이트가 개입하지 않도록 — 여기서 보려는 건 후보 생성이지 중복 판정이 아니다.
     counter = iter(range(0, 100000, 1000))
     monkeypatch.setattr(frames_mod.media, "phash", lambda p: next(counter))
+
+    # 전환 쌍 비교: 기본은 '화면이 실제로 바뀜'(서로 다른 배열)
+    grays = iter(range(1, 10000))
+    monkeypatch.setattr(frames_mod.media, "extract_gray_array",
+                        lambda p, t, w=200, h=112: np.full((h, w), next(grays) % 250,
+                                                           dtype=np.uint8))
     return captured
 
 
@@ -89,6 +95,27 @@ def test_pre_candidate_skipped_when_transition_starts_at_first_frame(
     result = frames_mod.build_frames(tmp_path / "v.mkv", tmp_path / "y.analysis", [])
     sources = [tuple(r["sources"]) for r in result["records"]]
     assert ("anchor-diff-pre",) not in sources
+
+
+def test_pre_candidate_dropped_when_screen_did_not_change(
+        monkeypatch, stub_pipeline, tmp_path):
+    """전환이 잡혔어도 화면이 실제로 안 바뀌었으면(자막만 교체 등) 전환 직전
+    후보를 내지 않는다. 내면 같은 화면이 두 장 채택되고 — 전역 중복 게이트의
+    pHash 사전 필터가 자막에 과민해 못 걸러낸다(실측 10표본 중 9건 통과) —
+    구간이 0.07초로 퇴화하며 같은 대사가 두 이미지에 중복으로 붙는다."""
+    same = np.full((225, 400), 128, dtype=np.uint8)
+    monkeypatch.setattr(frames_mod.media, "extract_gray_array",
+                        lambda p, t, w=200, h=112: same)
+
+    result = frames_mod.build_frames(tmp_path / "v.mkv", tmp_path / "s.analysis", [])
+    sources = [tuple(r["sources"]) for r in result["records"]]
+    assert ("anchor-diff-pre",) not in sources, "안 바뀐 화면의 직전 후보는 생략"
+    assert ("anchor-diff",) in sources, "트리거는 그대로 남는다"
+
+
+def test_pair_threshold_is_recorded_in_params(stub_pipeline, tmp_path):
+    r = frames_mod.build_frames(tmp_path / "v.mkv", tmp_path / "p.analysis", [])
+    assert r["params"]["pair_dup_threshold"] == 0.93
 
 
 def test_v1_anchor_cache_is_rejected(monkeypatch, tmp_path):

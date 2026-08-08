@@ -39,6 +39,28 @@ def _gray_for_compare(img_path: Path, w: int = 400, h: int = 225) -> np.ndarray:
     return np.asarray(Image.open(img_path).convert("L").resize((w, h)))
 
 
+def _pair_changed(video_path: Path, t_pre: float, t_trigger: float,
+                  threshold: float) -> bool:
+    """전환 직전/직후가 정말 다른 화면인가 — 이 한 쌍만 직접 본다.
+
+    전역 중복 게이트에 맡길 수 없다. 그 게이트의 pHash 사전 필터(≤4)는 자막
+    몇 글자에 거리가 6~16까지 튀어(실측 video3 동일 화면 17쌍 중 9쌍) SSIM이
+    "같다"고 해도 발언 기회를 주지 않는다. 그렇다고 사전 필터를 넓히면 멀리
+    떨어진 남남끼리 배경만으로 병합된다 — ≤20으로 넓히자 video3에서 162쌍이
+    오병합됐고 그중 500초·1400초 떨어진 쌍이 다수였다.
+
+    반면 이 쌍은 0.07초 차이라 배경·조명·구도가 완전히 같은 동일 조건 비교다.
+    실측 분포가 갈라진다: 실제로 바뀐 쌍은 video3 ~0.8704 / video2 ~0.9274,
+    사실상 같은 쌍은 0.9550~ / 0.9839~ 로 그 사이가 비어 있다.
+    (video1은 애니메이션이라 연속 분포 — 그쪽에선 임계가 판단의 문제다)
+    """
+    a = media.extract_gray_array(video_path, t_pre, w=400, h=225)
+    b = media.extract_gray_array(video_path, t_trigger, w=400, h=225)
+    if a is None or b is None:
+        return True  # 못 읽으면 후보를 살린다 — 판정 실패로 정보를 잃지 않는다
+    return ssim(a, b) < threshold
+
+
 def _cached_anchor(video_path: Path, out_dir: Path, anchor_threshold: float,
                    rate_threshold: float, cut_area_threshold: float) -> dict:
     cache = out_dir / "detect_anchor.npz"
@@ -107,6 +129,7 @@ def build_frames(video_path: Path, out_dir: Path, points: list[dict], *,
                  cut_area_threshold: float = 0.04,
                  yavg_floor: float = 5.0, phash_dup_distance: int = 4,
                  ssim_dup_threshold: float = 0.9,
+                 pair_dup_threshold: float = 0.93,
                  near_distance: float = 2.0) -> dict:
     frames_dir = out_dir / "frames"
     rejected_dir = frames_dir / "rejected"
@@ -129,18 +152,24 @@ def build_frames(video_path: Path, out_dir: Path, points: list[dict], *,
     initial_t = adaptive.pick_stable_time(video_path, 0.0, duration, offset=0.5)
     candidates = [new_candidate(initial_t, 0.0, "initial")]
 
+    n_pair_dup = 0
     for e in anchor_result["events"]:
+        # 전환추적된 트리거는 이미 안정 상태에서 잡힌 것 — 추가 안정화 불필요
+        t = e.get("trigger_time", e["trigger_idx"] / fps)
         # 전환 '직전' 프레임 = 사라지려는 화면의 마지막 안정 상태. 판서 영상에서
         # 이것이 완성된 판서이고, 트리거(전환 후)는 이미 지워진 새 화면이다.
         # 컷 전환은 실측 중앙값 1프레임이라 트리거만 잡으면 완성본을 늘 놓친다.
-        # 정적 슬라이드에서는 둘이 사실상 같은 화면이므로 중복 게이트가 접는다.
         si = e.get("transition_start_idx")
         if si is not None and 0 < si < len(time_series):
             t_pre = float(time_series[si - 1])
-            candidates.append(new_candidate(t_pre, t_pre, "anchor-diff-pre"))
-        # 전환추적된 트리거는 이미 안정 상태에서 잡힌 것 — 추가 안정화 불필요
-        t = e.get("trigger_time", e["trigger_idx"] / fps)
+            if _pair_changed(video_path, t_pre, t, pair_dup_threshold):
+                candidates.append(new_candidate(t_pre, t_pre, "anchor-diff-pre"))
+            else:
+                n_pair_dup += 1
         candidates.append(new_candidate(t, t, "anchor-diff"))
+    if n_pair_dup:
+        log(f"[frames] 전환 {len(anchor_result['events'])}건 중 {n_pair_dup}건은 "
+            f"화면이 실제로 바뀌지 않았다 — 전환 직전 후보 생략")
 
     for entry in _cached_adaptive(video_path, out_dir, duration,
                                   anchor_result["time_series"]):
@@ -247,6 +276,7 @@ def build_frames(video_path: Path, out_dir: Path, points: list[dict], *,
             "cut_area_threshold": cut_area_threshold,
             "yavg_floor": yavg_floor, "phash_dup_distance": phash_dup_distance,
             "ssim_dup_threshold": ssim_dup_threshold,
+            "pair_dup_threshold": pair_dup_threshold,
             "near_distance": near_distance,
         },
     }
