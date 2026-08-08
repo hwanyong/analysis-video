@@ -43,10 +43,26 @@ REGISTRY = [
 
 DEFAULT_OPEN = ["player", "frame_sync", "dialogue", "timeline"]
 
+# 시간축 마크 종류 — (키, 표시명, 기본 순회 대상)
+# STT 세그먼트는 581건짜리라 한 칸씩 넘기는 것이 의미가 없다. 레인·범례에는
+# 남기되 통합 순회에서는 빼고, 필요한 사람만 필터로 켠다.
+MARK_KINDS = [
+    ("frame", "채택 프레임", True),
+    ("rejected", "탈락 후보", True),
+    ("point", "importance-point", True),
+    ("flag", "GT 플래그", True),
+    ("requested", "주문 추출", True),
+    ("transition", "전환 구간", False),
+    ("segment", "STT 세그먼트", False),
+]
+MARK_LABEL = {k: label for k, label, _ in MARK_KINDS}
+
 
 class Session(QObject):
     showRejectedChanged = Signal(bool)
     windowsChanged = Signal()
+    traverseChanged = Signal()           # 순회 대상 종류가 바뀜
+    markJumped = Signal(str, str)        # (종류 키, 사람이 읽을 설명)
 
     def __init__(self, video_path: Path, out_dir: Path):
         super().__init__()
@@ -59,8 +75,56 @@ class Session(QObject):
         # 탈락 후보는 기본 표시 — "왜 안 뽑혔나"가 검토의 절반이고, 실측 탈락 수는
         # 채택의 1/5 수준이라 화면을 어지럽히지 않는다. R로 끈다.
         self.show_rejected = True
+        self.traverse = {k for k, _, on in MARK_KINDS if on}
         self.windows: dict[str, object] = {}
         self.router = ShortcutRouter(self)
+
+    # ---------- 마크 순회 ----------
+
+    def mark_times(self, kind: str) -> list[float]:
+        """마크 종류별 착지 시각. 플래그만 FlagStore 소관이고 나머지는 산출물."""
+        return self.flags.times() if kind == "flag" else self.store.mark_times(kind)
+
+    def set_traverse(self, kind: str, on: bool) -> None:
+        self.traverse.add(kind) if on else self.traverse.discard(kind)
+        self.traverseChanged.emit()
+
+    def jump_mark(self, forward: bool = True, kinds=None) -> float | None:
+        """이전/다음 마크로 정확히 이동. kinds가 없으면 켜 둔 종류 전부를 섞는다.
+
+        드래그로 눈대중 조준하는 대신 마크에 정확히 착지시키는 것이 목적이므로,
+        후보 중 **가장 가까운 것**을 고른다(종류 우선순위 없음)."""
+        kinds = self.traverse if kinds is None else set(kinds)
+        now = self.engine.position()
+        best: tuple[float, str] | None = None
+        for kind in kinds:
+            t = Store._jump(self.mark_times(kind), now, forward)
+            if t is None:
+                continue
+            if best is None or (t < best[0] if forward else t > best[0]):
+                best = (t, kind)
+        if best is None:
+            return None
+        target, kind = best
+        self.engine.seek(target)
+        self.markJumped.emit(kind, self._describe_mark(kind, target))
+        return target
+
+    def _describe_mark(self, kind: str, t: float) -> str:
+        times = self.mark_times(kind)
+        idx = times.index(t) + 1 if t in times else 0
+        desc = f"{MARK_LABEL.get(kind, kind)} {idx}/{len(times)} · t={t:.2f}"
+        if kind == "point":
+            # 착지는 담당 프레임이므로 어느 point가 데려왔는지 밝혀 준다 —
+            # 병합된 point는 원시 시각이 수십 초 떨어져 있을 수 있다
+            raws = [p for p, o in self.store.point_owner.items() if o == t]
+            if raws:
+                desc += " ← point " + ", ".join(f"{p:.2f}" for p in sorted(raws))
+        elif kind == "rejected":
+            dup = self.store.dup_target(t)
+            if dup is not None:
+                desc += f" · {dup:.2f}의 중복 판정 (D로 원본 보기)"
+        return desc
 
     # ---------- 창 관리 ----------
 

@@ -301,6 +301,73 @@ def test_flag_toggle_and_timeline_delete(analyzed, qapp, pump):
         session.engine.shutdown()
 
 
+def test_mark_traversal_and_viewport_follow(analyzed, qapp, pump):
+    """↓/↑는 켜 둔 종류를 섞어 정확히 착지하고, 확대 상태에서도 커서를 놓치지 않는다."""
+    video, out_dir = analyzed
+    session = Session(video, out_dir)
+    try:
+        session.open_window("timeline")
+        pump(0.6)
+        tl = session.windows["timeline"]
+        frames = session.store.mark_times("frame")
+        assert len(frames) >= 3, "합성 영상에서 프레임이 여러 개 나와야 의미가 있다"
+
+        session.engine.seek(0.0)
+        pump(0.4)
+        jumped = []
+        session.markJumped.connect(lambda k, d: jumped.append((k, d)))
+
+        t1 = session.jump_mark(forward=True)
+        assert t1 in frames, "정확히 마크에 착지"
+        t2 = session.jump_mark(forward=True)
+        assert t2 is not None and t2 > t1, "다음 마크로 전진"
+        assert session.jump_mark(forward=False) == t1, "뒤로 = 직전 마크"
+        assert len(jumped) == 3 and all("/" in d for _k, d in jumped), \
+            "무엇으로 왔는지 설명이 나와야 한다"
+
+        # 필터를 전부 끄면 갈 곳이 없다
+        for kind in list(session.traverse):
+            session.set_traverse(kind, False)
+        assert session.jump_mark(forward=True) is None
+
+        # 확대 상태에서 점프하면 뷰포트가 커서를 따라온다
+        session.set_traverse("frame", True)
+        session.engine.seek(0.0)
+        pump(0.4)
+        tl.set_zoom(tl._zoom_max())
+        pump(0.3)
+        target = session.jump_mark(forward=True)
+        pump(0.5)
+        (x0, x1), _ = tl._pw.getViewBox().viewRange()
+        assert x0 <= target <= x1, "점프한 커서가 화면 안에 있어야 한다"
+    finally:
+        session.engine.shutdown()
+
+
+def test_timeline_click_snaps_to_nearest_mark(analyzed, qapp, pump):
+    """클릭이 생좌표로 가면 드래그 조준과 다를 게 없다 — 가까운 마크에 붙어야 한다."""
+    video, out_dir = analyzed
+    session = Session(video, out_dir)
+    try:
+        session.open_window("timeline")
+        pump(0.6)
+        tl = session.windows["timeline"]
+        mark = session.store.mark_times("frame")[1]
+
+        tl._on_click(_ClickEvent(tl, mark + 0.02, Qt.KeyboardModifier.NoModifier))
+        pump(0.5)
+        assert abs(session.engine.position() - mark) < 0.02, "마크에 달라붙어야 한다"
+
+        # 켜지 않은 종류에는 붙지 않는다
+        session.set_traverse("frame", False)
+        far = mark + 0.02
+        tl._on_click(_ClickEvent(tl, far, Qt.KeyboardModifier.NoModifier))
+        pump(0.5)
+        assert abs(session.engine.position() - far) < 0.05
+    finally:
+        session.engine.shutdown()
+
+
 def test_playhead_label_follows_programmatic_seek(analyzed, qapp, pump):
     """커서 시각 라벨은 setPos가 내는 시그널로만 갱신된다 — 막으면 0.00s에 언다."""
     video, out_dir = analyzed
@@ -324,18 +391,24 @@ def test_timeline_legend_reports_counts(analyzed, qapp, pump):
         session.open_window("timeline")
         pump(0.6)
         tl = session.windows["timeline"]
-        text = tl._legend.text()
-        assert f"프레임 채택 {len(session.store.frames)}" in text
-        assert f"탈락 {len(session.store.rejected)} · 표시" in text, "기본 표시 상태"
-        assert "GT 플래그 0" in text
+        assert f"프레임 채택 {len(session.store.frames)}" in tl._legend_head.text()
+        assert tl._kind_boxes["rejected"].text().endswith(
+            str(len(session.store.rejected))), "기본은 표시 상태(숨김 표기 없음)"
+        assert tl._kind_boxes["flag"].text().startswith("▲ GT 플래그 0")
 
         session.toggle_rejected()
         pump(0.2)
-        assert "숨김" in tl._legend.text(), "숨긴 상태가 범례에 드러나야 한다"
+        assert "숨김" in tl._kind_boxes["rejected"].text(), "숨긴 상태가 드러나야 한다"
 
         session.flags.toggle(2.0)
         pump(0.2)
-        assert "GT 플래그 1" in tl._legend.text()
+        assert "GT 플래그 1" in tl._kind_boxes["flag"].text()
+
+        # 체크박스가 곧 순회 필터
+        assert not tl._kind_boxes["segment"].isChecked(), "STT는 581건이라 기본 제외"
+        tl._kind_boxes["segment"].setChecked(True)
+        pump(0.2)
+        assert "segment" in session.traverse
     finally:
         session.engine.shutdown()
 

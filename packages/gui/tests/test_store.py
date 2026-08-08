@@ -26,6 +26,38 @@ def test_point_times_are_deduped(qapp, tmp_path):
     assert st.point_times == [42.0], "같은 point가 두 번 세어지면 안 된다"
 
 
+def test_point_lands_on_the_frame_it_produced(qapp, tmp_path):
+    """point 원시 시각으로 이동하면 화면에는 직전 구간 이미지가 뜬다 — 안정화(+0.3초)와
+    중복 병합 때문. 착지는 그 point를 품은 프레임이어야 확인이 성립한다."""
+    out = tmp_path / "p.analysis"
+    _write(out,
+           frames=[{"time": 10.0, "interval": [10.0, 244.4], "sources": ["anchor-diff"]},
+                   {"time": 244.4, "interval": [244.4, 900.0],
+                    "sources": ["importance-point"], "point_times": [244.1]},
+                   {"time": 963.13, "interval": [963.13, 1600.0],
+                    "sources": ["anchor-diff", "importance-point"],
+                    "point_times": [1069.0]}],
+           rejected=[{"time": 1069.3, "sources": ["importance-point"],
+                      "reject_reason": "phash-dup(of=963.13)", "dup_of": 963.13,
+                      "point_times": [1069.0]}],
+           duration=1600.0)
+    st = Store(tmp_path / "nonexistent.mkv", out)
+
+    assert st.point_times == [244.1, 1069.0], "★는 원시 시각 자리에 찍힌다"
+    assert st.point_landings == [244.4, 963.13], "착지는 담당 프레임"
+    assert st.point_owner[1069.0] == 963.13, "병합된 point는 승계 대상이 담당"
+
+    # 순회는 착지 시각 위에서 — 원시 시각으로 순회하면 착지 후 뒤로 가기가
+    # 방금 온 자리를 다시 가리켜 제자리에 갇힌다
+    assert st.next_point_time(0.0, forward=True) == 244.4
+    assert st.next_point_time(244.4, forward=True) == 963.13
+    assert st.next_point_time(963.13, forward=False) == 244.4
+    assert st.next_point_time(244.4, forward=False) is None
+
+    assert st.dup_target(1069.3) == 963.13, "탈락 → 중복 원본 링크"
+    assert st.dup_target(500.0) is None
+
+
 def test_source_counts_span_composites(qapp, tmp_path):
     out = tmp_path / "y.analysis"
     _write(out,

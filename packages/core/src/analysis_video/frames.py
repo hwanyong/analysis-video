@@ -173,7 +173,10 @@ def build_frames(video_path: Path, out_dir: Path, points: list[dict], *,
                     dup["sources"].append(s)
             dup["reasons"].extend(r for r in c["reasons"] if r not in dup["reasons"])
             dup["point_times"].extend(t for t in c["point_times"] if t not in dup["point_times"])
+            # dup_of는 사유 문자열과 별개의 기계 판독용 필드다. 소비자가 "of=…"를
+            # 정규식으로 되파싱하게 두면 표현이 바뀔 때마다 조용히 끊긴다.
             c.update(status="rejected", reject_reason=f"phash-dup(of={dup['time']:.2f})",
+                     dup_of=round(dup["time"], 2),
                      image=dst.relative_to(out_dir).as_posix())
             records.append(c)
             return

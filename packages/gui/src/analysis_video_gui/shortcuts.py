@@ -14,13 +14,19 @@ from PySide6.QtWidgets import QAbstractSpinBox, QApplication, QLineEdit, QPlainT
 from .playback import RATES
 
 SHORTCUT_HELP = """\
-Space / K      재생 · 일시정지          N / ⇧N     다음/이전 채택 프레임
-← / →          5초 뒤로/앞으로          P / ⇧P     다음/이전 importance-point
-J / L          10초 뒤로/앞으로         R          탈락 후보 숨김/표시
-, / .          프레임 단위 스텝          F          GT 플래그 추가/제거(토글)
-⇧, / ⇧.        배속 내림/올림           M          음소거
-0~9            0~90% 지점으로 점프      Home/End   처음/끝
-?              이 도움말
+[재생]                              [마크로 정확히 이동]
+Space / K      재생 · 일시정지          ↓ / ↑      다음/이전 마크 (켜 둔 종류 전부)
+← / →          5초 뒤로/앞으로          N / ⇧N     다음/이전 채택 프레임
+J / L          10초 뒤로/앞으로         P / ⇧P     다음/이전 importance-point
+, / .          프레임 단위 스텝          G / ⇧G     다음/이전 GT 플래그
+⇧, / ⇧.        배속 내림/올림           D          이 탈락이 '무엇의 중복'인지 원본으로
+0~9            0~90% 지점으로 점프      R          탈락 후보 숨김/표시
+Home/End       처음/끝                  F          GT 플래그 추가/제거(토글)
+M              음소거                   ?          이 도움말
+
+↓/↑가 훑는 종류는 타임라인 범례의 체크박스로 고릅니다(STT 세그먼트는 581건이라
+기본 제외). 타임라인 클릭도 가까운 마크에 달라붙고, 점프하면 화면 밖으로 나간
+재생 커서를 뷰포트가 따라갑니다.
 
 GT 플래그 = "이 장면은 반드시 뽑혔어야 한다"는 사람의 정답 표시. 로직 검출과
 대조해 ⑥ 비교 리포트가 recall(놓친 것)·precision(군더더기)을 계산합니다.
@@ -116,15 +122,29 @@ class ShortcutRouter(QObject):
         if Qt.Key.Key_0 <= key <= Qt.Key.Key_9:
             e.seek(e.duration * (key - Qt.Key.Key_0) / 10.0)
             return True
+        # ↑/↓ = 켜 둔 종류를 섞어 이전/다음 마크. 전용 키는 자주 쓰는 3종만.
+        if key == Qt.Key.Key_Down:
+            s.jump_mark(forward=True)
+            return True
+        if key == Qt.Key.Key_Up:
+            s.jump_mark(forward=False)
+            return True
         if key == Qt.Key.Key_N:
-            t = s.store.next_frame_time(e.position(), forward=not shift)
-            if t is not None:
-                e.seek(t)
+            s.jump_mark(forward=not shift, kinds=["frame"])
             return True
         if key == Qt.Key.Key_P:
-            t = s.store.next_point_time(e.position(), forward=not shift)
-            if t is not None:
-                e.seek(t)
+            s.jump_mark(forward=not shift, kinds=["point"])
+            return True
+        if key == Qt.Key.Key_G:
+            s.jump_mark(forward=not shift, kinds=["flag"])
+            return True
+        if key == Qt.Key.Key_D:
+            # 탈락 후보가 '무엇의 중복'으로 판정됐는지 그 원본으로 건너뛴다 —
+            # 중복 판정이 옳았는지 확인할 유일한 수단
+            target = s.store.dup_target(e.position())
+            if target is not None:
+                e.seek(target)
+                s.markJumped.emit("frame", f"중복 판정의 원본 프레임 t={target:.2f}")
             return True
         if key == Qt.Key.Key_R:
             if not repeat:

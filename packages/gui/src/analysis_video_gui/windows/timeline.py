@@ -21,11 +21,22 @@ import math
 import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import QEvent, Qt
-from PySide6.QtWidgets import (QButtonGroup, QHBoxLayout, QLabel, QSlider, QToolButton,
-                               QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QHBoxLayout, QLabel, QSlider,
+                               QToolButton, QVBoxLayout, QWidget)
 
-from ..session import Session
+from ..session import MARK_KINDS, Session
 from . import ChildWindow, fmt_time
+
+# 범례 체크박스에 쓰는 마크 종류별 색·기호 (레인에 그리는 것과 같아야 한다)
+KIND_STYLE = {
+    "frame": ((60, 160, 90), "■"),
+    "rejected": ((187, 85, 85), "✗"),
+    "requested": ((200, 140, 255), "◆"),
+    "point": ((230, 194, 41), "★"),
+    "segment": ((150, 150, 150), "▬"),
+    "flag": ((255, 140, 0), "▲"),
+    "transition": ((120, 120, 170), "▬"),
+}
 
 # ---------- 레인 기하 (y는 0=바닥, 위로 증가) ----------
 Y_RANGE = (0.0, 9.0)
@@ -60,6 +71,7 @@ SOURCE_ORDER = ["importance-point", "adaptive", "anchor-diff", "initial"]
 
 MIN_SPAN = 2.0        # 최대 확대에서 보이는 시간 폭(초)
 ZOOM_STEPS = 1000     # 배율 슬라이더 해상도 (로그 눈금)
+SNAP_PIXELS = 12      # 클릭 스냅 허용오차 — 시간이 아니라 화면 픽셀 기준(편집기 관례)
 
 TOOLS = [
     ("scrub", "▶ 스크럽", "V",
@@ -161,6 +173,8 @@ class TimelineWindow(ChildWindow):
         self.bind(session.store.reloaded, self._build)
         self.bind(session.flags.changed, self._on_flags_changed)
         self.bind(session.showRejectedChanged, self._on_show_rejected)
+        self.bind(session.traverseChanged, self._update_legend)
+        self.bind(session.markJumped, self._on_mark_jumped)
         self.bind(session.engine.positionChanged, self._on_pos)
         self._pw.scene().sigMouseClicked.connect(self._on_click)
         self._pw.scene().sigMouseMoved.connect(self._on_hover)
@@ -221,56 +235,86 @@ class TimelineWindow(ChildWindow):
     # ---------- 범례 ----------
 
     def _build_legend(self) -> QWidget:
+        """범례이자 순회 필터. 체크박스가 곧 ↓/↑와 클릭 스냅의 대상 목록이다 —
+        각 종류의 뜻·색·개수를 이미 들고 있는 자리라 필터를 따로 둘 이유가 없다."""
         box = QWidget()
-        box.setFixedWidth(230)
+        box.setFixedWidth(238)
         # 그래프를 설명하는 패널이므로 그래프와 같은 배경 — 시선이 두 번 적응하지 않게
         box.setStyleSheet("background:#181818; color:#ddd;")
         lay = QVBoxLayout(box)
         lay.setContentsMargins(8, 4, 6, 4)
         lay.setSpacing(1)
-        self._legend = QLabel()
-        self._legend.setTextFormat(Qt.TextFormat.RichText)
-        self._legend.setAlignment(Qt.AlignmentFlag.AlignTop)
-        self._legend.setWordWrap(True)
-        lay.addWidget(self._legend)
+
+        self._legend_head = QLabel()
+        self._legend_head.setTextFormat(Qt.TextFormat.RichText)
+        self._legend_head.setWordWrap(True)
+        lay.addWidget(self._legend_head)
+
+        lay.addWidget(self._note("<span style='color:#888'>체크 = ↓/↑ 순회·클릭 스냅 대상"
+                                 "</span>"))
+        self._kind_boxes: dict[str, QCheckBox] = {}
+        for kind, label, _default in MARK_KINDS:
+            color, glyph = KIND_STYLE[kind]
+            cb = QCheckBox(f"{glyph} {label}")
+            cb.setChecked(kind in self.session.traverse)
+            cb.setFocusPolicy(Qt.FocusPolicy.NoFocus)  # 전역 단축키를 뺏기지 않게
+            cb.setStyleSheet(f"color: rgb{color};")
+            cb.toggled.connect(lambda on, k=kind: self.session.set_traverse(k, on))
+            self._kind_boxes[kind] = cb
+            lay.addWidget(cb)
+
+        self._legend_tail = QLabel()
+        self._legend_tail.setTextFormat(Qt.TextFormat.RichText)
+        self._legend_tail.setWordWrap(True)
+        lay.addWidget(self._legend_tail)
         lay.addStretch(1)
         return box
+
+    @staticmethod
+    def _note(html: str) -> QLabel:
+        lb = QLabel(html)
+        lb.setTextFormat(Qt.TextFormat.RichText)
+        lb.setWordWrap(True)
+        return lb
 
     def _update_legend(self) -> None:
         st = self.session.store
         counts = st.source_counts()
-        rej_state = "표시" if self.session.show_rejected else "<b>숨김</b> · R"
-        rows = [f"<b>프레임 채택 {len(st.frames)}</b>"]
-        rows += [f"&nbsp;{_swatch(SOURCE_COLORS[s])} {s} {counts.get(s, 0)}"
+        head = [f"<b>프레임 채택 {len(st.frames)}</b>"]
+        head += [f"&nbsp;{_swatch(SOURCE_COLORS[s])} {s} {counts.get(s, 0)}"
                  for s in SOURCE_ORDER]
-        rows.append("&nbsp;<span style='color:#eee'>▭</span> 흰 테두리 = 복합 근거")
-        rows.append("")
-        rows += [
-            f"{_swatch((187, 85, 85), '✗')} 탈락 {len(st.rejected)} · {rej_state}",
-            f"{_swatch((200, 140, 255), '◆')} 주문 추출 {len(st.requested)}"
-            + ("" if st.requested else " <span style='color:#777'>(frame --at)</span>"),
-            f"{_swatch((230, 194, 41), '★')} points {len(st.point_times)}",
-            f"{_swatch((150, 150, 150), '▬')} STT 세그먼트 {len(st.segments)}",
-            f"{_swatch((255, 140, 0), '▲')} GT 플래그 {len(self.session.flags.flags)}",
-            "<span style='color:#888'>&nbsp;“이 장면은 뽑혔어야 한다”는 사람의 정답."
-            " F로 추가/취소, ▼ ⇧클릭 삭제. ⑥ 비교 리포트가 이것과 검출을 대조해"
-            " recall·precision을 낸다.</span>",
-            "",
-        ]
+        head.append("&nbsp;<span style='color:#eee'>▭</span> 흰 테두리 = 복합 근거")
+        self._legend_head.setText("<br>".join(head))
+
+        counts_by_kind = {k: len(self.session.mark_times(k)) for k, _, _ in MARK_KINDS}
+        counts_by_kind["point"] = len(st.point_times)   # ★는 원시 시각 자리에 찍힌다
+        for kind, label, _d in MARK_KINDS:
+            glyph = KIND_STYLE[kind][1]
+            extra = ""
+            if kind == "rejected" and not self.session.show_rejected:
+                extra = " · 숨김(R)"
+            elif kind == "requested" and not counts_by_kind[kind]:
+                extra = " · frame --at"
+            elif kind == "flag" and not counts_by_kind[kind]:
+                extra = " · F로 기입"
+            self._kind_boxes[kind].setText(
+                f"{glyph} {label} {counts_by_kind[kind]}{extra}")
+
+        tail = ["<span style='color:#888'>GT 플래그 = “이 장면은 뽑혔어야 한다”는 사람의"
+                " 정답. F 추가/취소, ▼ ⇧클릭 삭제, G 이동. ⑥ 비교 리포트가 검출과"
+                " 대조해 recall·precision을 낸다.</span>", ""]
         if st.series is not None:
-            cth = st.series["cum_threshold"]
-            rth = st.series["rate_threshold"]
-            rows += [
-                f"{_swatch((110, 110, 160), '▬')} 전환 구간 {len(st.transitions)}",
+            cth, rth = st.series["cum_threshold"], st.series["rate_threshold"]
+            tail += [
                 f"{_swatch((90, 160, 255), '━')} 누적 diff",
                 f"&nbsp;&nbsp;<span style='color:#f55'>┈</span> {cth} <b>넘으면</b> 후보",
                 f"{_swatch((255, 160, 60), '━')} 순간 변화율",
                 f"&nbsp;&nbsp;<span style='color:#f55'>┈</span> {rth} <b>아래로</b> 내려가면 트리거",
             ]
         else:
-            rows.append("<span style='color:#777'>detect_anchor.npz 없음 —"
-                        " 변화량 미표시</span>")
-        self._legend.setText("<br>".join(rows))
+            tail.append("<span style='color:#777'>detect_anchor.npz 없음 — 변화량 미표시"
+                        "</span>")
+        self._legend_tail.setText("<br>".join(tail))
 
     # ---------- 도구 ----------
 
@@ -515,6 +559,41 @@ class TimelineWindow(ChildWindow):
             # 라벨이 0.00s에 얼어붙는다. 우리가 받는 시그널(sigDragged /
             # sigPositionChangeFinished)은 setPos가 내지 않으므로 되먹임도 없다.
             self._playhead.setPos(t)
+            self._follow(t)
+
+    def _follow(self, t: float) -> None:
+        """커서가 보이는 범위를 벗어나면 재중심.
+
+        항상 중앙에 고정하면 재생 내내 화면이 흘러 눈이 피로하다. 반대로 아예
+        따라가지 않으면 확대 상태에서 점프했을 때 커서를 화면에서 잃는다
+        (마크를 확대해 보려는 것이 애초 목적인데 점프한 순간 사라진다)."""
+        vb = self._pw.getViewBox()
+        (x0, x1), _ = vb.viewRange()
+        span = x1 - x0
+        if span >= self.session.store.duration * 0.999:
+            return  # 전체 보기 — 따라갈 것이 없다
+        margin = span * 0.05
+        if x0 + margin <= t <= x1 - margin:
+            return
+        self.set_zoom(self._zoom_now(), center=t)
+
+    def _snap(self, t: float) -> float:
+        """가까운 마크에 달라붙는다 — 허용오차는 화면 픽셀 기준이라 배율과 무관하게
+        '눈에 보이는 만큼'이다. 대상은 범례에서 켜 둔 종류(순회 대상과 동일)."""
+        try:
+            tol = float(self._pw.getViewBox().viewPixelSize()[0]) * SNAP_PIXELS
+        except Exception:
+            tol = 0.05
+        best, best_d = t, tol
+        for kind in self.session.traverse:
+            for m in self.session.mark_times(kind):
+                d = abs(m - t)
+                if d < best_d:
+                    best, best_d = m, d
+        return best
+
+    def _on_mark_jumped(self, _kind: str, description: str) -> None:
+        self._readout.setText(f"<span style='color:#8cf'>▸ {description}</span>")
 
     def scrub_drag(self, ev, t: float) -> None:
         """뷰박스 위 좌드래그 = 재생 위치 실시간 이동."""
@@ -550,4 +629,5 @@ class TimelineWindow(ChildWindow):
             if i is not None:
                 self.session.flags.remove(i)
             return
-        self.session.engine.seek(t)
+        # 눈대중 좌표가 아니라 가까운 마크로 — 드래그로 조준하던 수고를 없앤다
+        self.session.engine.seek(self._snap(t))

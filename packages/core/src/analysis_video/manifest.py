@@ -106,6 +106,9 @@ def build_metadata(video_path: Path, transcript: dict, build: dict) -> dict:
             entry["reasons"] = r["reasons"]
         if r.get("point_times"):
             entry["point_times"] = [round(t, 2) for t in r["point_times"]]
+        # 중복 판정이 옳았는지 확인하려면 병합 대상으로 건너뛸 수 있어야 한다
+        if r.get("dup_of") is not None:
+            entry["dup_of"] = r["dup_of"]
         rejected_out.append(entry)
 
     return {

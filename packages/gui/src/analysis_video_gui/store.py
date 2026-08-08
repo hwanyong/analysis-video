@@ -31,7 +31,9 @@ class Store(QObject):
         self.series: dict | None = None    # times/cum/rate/cum_threshold/rate_threshold
         self.transitions: list[tuple[float, float]] = []  # (전환 시작, 트리거) 구간
         self.duration: float = 0.0
-        self.point_times: list[float] = []
+        self.point_times: list[float] = []        # 원시 point 시각 (★를 찍는 자리)
+        self.point_landings: list[float] = []     # 그 point들이 만든 프레임 시각
+        self.point_owner: dict[float, float] = {}
 
         self._debounce = QTimer(self)
         self._debounce.setSingleShot(True)
@@ -106,7 +108,29 @@ class Store(QObject):
         self.point_times = sorted({
             round(t, 2) for f in self.frames + self.rejected
             for t in f.get("point_times", [])})
+        self._build_point_owners()
         self.reloaded.emit()
+
+    def _build_point_owners(self) -> None:
+        """point 원시 시각 → 그 point가 실제로 만들어낸 채택 프레임의 시각.
+
+        point는 안정화 때문에 +0.3초 뒤에서 캡처되고(frames.py), 중복 병합되면
+        수십 초 떨어진 프레임으로 승계된다. 그래서 point 원시 시각으로 이동하면
+        화면에는 **직전 구간의 이미지**가 뜬다 — video3 실측 5/5 전부 빗나갔다.
+        착지는 담당 프레임으로 해야 "이 대사 때문에 이 장면"이 확인된다.
+        """
+        owner: dict[float, float] = {}
+        for f in self.frames:
+            for t in f.get("point_times", []):
+                owner.setdefault(round(t, 2), f["time"])
+        for r in self.rejected:
+            for t in r.get("point_times", []):
+                # 탈락에만 붙은 point는 병합 대상으로, 그것도 없으면 제자리
+                owner.setdefault(round(t, 2), r.get("dup_of", r["time"]))
+        self.point_owner = owner
+        # 순회는 착지 시각 위에서 해야 한다 — 원시 시각으로 순회하면 착지 후
+        # 뒤로 가기가 방금 온 자리를 다시 가리켜 제자리에 갇힌다
+        self.point_landings = sorted(set(owner.values()))
 
     def _read_json(self, name: str):
         p = self.out_dir / name
@@ -160,4 +184,23 @@ class Store(QObject):
         return self._jump(self._frame_starts, t, forward)
 
     def next_point_time(self, t: float, forward: bool = True) -> float | None:
-        return self._jump(self.point_times, t, forward)
+        return self._jump(self.point_landings, t, forward)
+
+    def mark_times(self, kind: str) -> list[float]:
+        """마크 종류별 착지 시각 목록 (시간 오름차순). 순회의 단일 원천."""
+        return {
+            "frame": self._frame_starts,
+            "rejected": sorted(r["time"] for r in self.rejected),
+            "point": self.point_landings,
+            "requested": sorted(r["time"] for r in self.requested),
+            "transition": sorted(a for a, _ in self.transitions),
+            "segment": self._seg_starts,
+        }.get(kind, [])
+
+    def dup_target(self, time: float, within: float = 0.3) -> float | None:
+        """time 근처 탈락 후보가 '무엇의 중복'으로 판정됐는지 — 그 원본의 시각."""
+        near = [r for r in self.rejected if abs(r["time"] - time) <= within
+                and r.get("dup_of") is not None]
+        if not near:
+            return None
+        return min(near, key=lambda r: abs(r["time"] - time))["dup_of"]
