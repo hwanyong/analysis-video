@@ -465,3 +465,13 @@ def test_compare_metrics():
     assert m["precision"] == round(2 / 3, 3)
     assert m["missed_flags"] == [90.0]
     assert m["extra_detected"] == [200.0]
+
+
+def test_metrics_are_undefined_without_ground_truth():
+    """정답지가 없으면 precision도 정의되지 않는다 — 0/n을 0.0%로 내보내면
+    '아직 안 찍었다'가 '로직이 다 틀렸다'로 읽힌다."""
+    m = compare_metrics([], [10.0, 20.0, 30.0], tolerance=2.0)
+    assert m["precision"] is None and m["recall"] is None
+    assert m["n_detected"] == 3
+    # 검출이 없을 때도 마찬가지 — 둘 중 하나만 비어도 비교가 성립하지 않는다
+    assert compare_metrics([10.0], [], tolerance=2.0)["precision"] is None

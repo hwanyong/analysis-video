@@ -86,7 +86,10 @@ def compare_metrics(flag_times: list[float], detected_times: list[float],
 
     n_f, n_d = len(flag_times), len(detected_times)
     recall = len(matched_flags) / n_f if n_f else None
-    precision = (n_d - len(false_positives)) / n_d if n_d else None
+    # 정답지가 없으면 검출이 맞았는지 틀렸는지 말할 근거 자체가 없다. 식은
+    # 0/n으로 떨어지지만 그건 "로직이 다 틀렸다"가 아니라 "아직 안 찍었다"다 —
+    # 0.0%로 내보내면 튜닝 근거로 쓰라고 만든 수치가 거짓 신호가 된다.
+    precision = (n_d - len(false_positives)) / n_d if (n_d and n_f) else None
     return {
         "tolerance": tolerance,
         "n_flags": n_f, "n_detected": n_d,

@@ -57,6 +57,28 @@ def test_series_is_loaded_from_real_npz(qapp, analyzed):
     assert all(isinstance(v, float) for v in sv)
 
 
+def test_transitions_are_scoped_to_the_unit(qapp, analyzed):
+    """검출 캐시(npz)는 영상 전체분이다. 부분 단위가 그걸 그대로 노출하면
+    구간 밖 전환이 이 단위의 결과인 척 범례에 세어지고, 순회(↓/↑)도 안 본
+    구간으로 착지한다."""
+    from analysis_video import cli
+
+    video, root = analyzed
+    assert cli.main(["frames", str(video), "--out", str(root), "--range", "2-6"]) == 0
+
+    st_full = Store(video, root, unit="full")
+    st_part = Store(video, root, unit="00002_0-00006_0")
+    assert st_part.window == [2.0, 6.0]
+    assert st_full.transitions, "전체 단위에 전환이 하나도 없으면 검증이 무의미"
+
+    lo, hi = st_part.window
+    assert all(lo <= trig <= hi for _, trig in st_part.transitions), \
+        f"구간 밖 전환이 남았다: {st_part.transitions}"
+    assert len(st_part.transitions) < len(st_full.transitions)
+    assert st_part.mark_times("transition") == sorted(
+        a for a, _ in st_part.transitions), "순회 착지점도 같은 목록을 써야 한다"
+
+
 def test_source_counts_span_composites(qapp, tmp_path):
     out = tmp_path / "y.analysis"
     _write(out,

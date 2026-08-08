@@ -100,10 +100,15 @@ class Store(QObject):
                     "cut_area_threshold": float(d["cut_area_threshold"]),
                 }
                 # 앵커가 흔들리기 시작해(transition_start) 안정 판정으로 트리거되기까지의
-                # 구간 — 검출기가 "왜 여기서 끊었는가"를 설명하는 유일한 증거다
+                # 구간 — 검출기가 "왜 여기서 끊었는가"를 설명하는 유일한 증거다.
+                # npz는 영상 전체분이지만 이 단위는 자기 구간만 본다. 코어가 후보를
+                # 거른 기준(트리거 시각이 구간 안)과 같게 걸러야 여기 그려지는 전환이
+                # 이 단위의 화면 경계와 1:1로 맞는다.
+                lo, hi = self.window
                 self.transitions = [
                     (float(e["transition_start_time"]), float(e["trigger_time"]))
-                    for e in json.loads(str(d["events_json"]))]
+                    for e in json.loads(str(d["events_json"]))
+                    if lo <= float(e["trigger_time"]) <= hi]
             except Exception:
                 self.series = None
 

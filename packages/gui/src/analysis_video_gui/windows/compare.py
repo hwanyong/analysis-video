@@ -113,6 +113,14 @@ class CompareWindow(ChildWindow):
             for col, text in enumerate(cells):
                 self._table.setItem(row, col, QTableWidgetItem(text))
 
+        if not m["n_flags"]:
+            # 정답지가 없으면 검출 전부가 형식상 FP로 잡힌다 — 그 목록을 늘어놓으면
+            # 로직이 다 틀린 것처럼 읽힌다. 할 일을 알려주는 편이 정직하다.
+            self._fp_label.setText(
+                "<span style='color:gray'>이 구간에 GT 플래그가 없습니다 — "
+                "영상을 보며 <b>F</b>로 \"여기서 뽑혔어야 한다\"를 찍으면 그때부터 "
+                "precision·recall이 산출됩니다.</span>")
+            return
         fp = m["extra_detected"]
         shown = ", ".join(fmt_time(t) for t in fp[:10])
         more = f" 외 {len(fp) - 10}건" if len(fp) > 10 else ""

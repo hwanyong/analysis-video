@@ -441,17 +441,6 @@ class TimelineWindow(ChildWindow):
             self._pw.addItem(pg.InfiniteLine(pos=y, angle=0, movable=False,
                                              pen=pg.mkPen((70, 70, 70), width=1)))
 
-        # 분석하지 않은 구간을 덮어 표시한다. 빈 구간이 "검출된 게 없음"인지
-        # "애초에 안 봤음"인지 구분이 안 되면 부분 분석 결과를 읽을 수 없다.
-        lo, hi = (st.window if st.window else [0.0, duration])
-        gaps = [(0.0, lo), (hi, duration)]
-        gaps = [(a, b) for a, b in gaps if b - a > duration * 1e-4]
-        if gaps:
-            self._pw.addItem(pg.BarGraphItem(
-                x0=[a for a, _ in gaps], x1=[b for _, b in gaps],
-                y0=Y_RANGE[0], y1=Y_RANGE[1],
-                brush=(20, 20, 20, 190), pen=None))
-
         if st.transitions:
             # 변화량 레인 전체를 덮는 음영 — 곡선이 이 구간 안에서 오르내리다
             # 안정되어 트리거된 것이 보인다
@@ -507,12 +496,31 @@ class TimelineWindow(ChildWindow):
         if st.series is not None:
             self._plot_diff(st)
 
+        self._shade_unanalyzed(st, duration)
+
         self._update_flags()
         self._pw.addItem(self._flags_item)
         self._pw.addItem(self._playhead)
         self._apply_tool()
         self._sync_zoom_ui()
         self._update_legend()
+
+    def _shade_unanalyzed(self, st, duration: float) -> None:
+        """분석하지 않은 구간을 덮는다. 빈 구간이 "검출된 게 없음"인지 "애초에
+        안 봤음"인지 구분이 안 되면 부분 분석 결과를 읽을 수 없다.
+
+        곡선·STT는 영상 전체분(루트 산출물)이라 구간 밖에도 그려진다 — 음영이
+        그 **위**에 와야 덮이는 의미가 산다. 밑에 깔면 구간 밖도 분석된 것처럼
+        보인다. 반대로 재생 헤드와 GT 플래그는 어디서든 조작해야 하므로
+        이 뒤에 얹어 음영 위에 남긴다."""
+        lo, hi = (st.window if st.window else [0.0, duration])
+        gaps = [(a, b) for a, b in ((0.0, lo), (hi, duration))
+                if b - a > duration * 1e-4]
+        if not gaps:
+            return
+        self._pw.addItem(pg.BarGraphItem(
+            x0=[a for a, _ in gaps], x1=[b for _, b in gaps],
+            y0=Y_RANGE[0], y1=Y_RANGE[1], brush=(20, 20, 20, 190), pen=None))
 
     def _plot_diff(self, st) -> None:
         """anchor diff·순간 변화율·컷 면적을 각자의 레인에 기준선과 함께 쌓는다.
