@@ -115,8 +115,12 @@ def _video_resource(state: dict, original: Path) -> Path:
     return original
 
 
-def run_frames(video: Path, out_dir: Path, ranges: list[str] | None = None) -> dict:
-    """구간마다 독립 분석 단위를 만든다. 구간이 없으면 'full' 단위 하나."""
+def run_frames(video: Path, out_dir: Path, ranges: list[str] | None = None,
+               thresholds: dict | None = None) -> dict:
+    """구간마다 독립 분석 단위를 만든다. 구간이 없으면 'full' 단위 하나.
+
+    thresholds는 세 신호의 기준선. 측정 캐시에는 안 들어가므로(임계는 판단의
+    소관) 바꿔도 전 프레임 디코드를 다시 하지 않는다."""
     state = manifest.load_state(out_dir)
     manifest.check_source(state, video)
     manifest.require_done(
@@ -131,7 +135,8 @@ def run_frames(video: Path, out_dir: Path, ranges: list[str] | None = None) -> d
 
     made = []
     for rng in units:
-        made.append(_run_unit(video, video_src, out_dir, rng, transcript, duration))
+        made.append(_run_unit(video, video_src, out_dir, rng, transcript,
+                              duration, thresholds or {}))
     entries = runs.merge_index(out_dir, made)
     index = context.write_index(out_dir, video.name, duration, entries)
 
@@ -143,7 +148,7 @@ def run_frames(video: Path, out_dir: Path, ranges: list[str] | None = None) -> d
 
 
 def _run_unit(video: Path, video_src: Path, out_dir: Path, rng, transcript: dict,
-              duration: float) -> dict:
+              duration: float, thresholds: dict) -> dict:
     unit = runs.unit_dir(out_dir, rng)
     if unit.exists():
         shutil.rmtree(unit)          # 결정적 재계산 — 이전 산출물이 섞이지 않게
@@ -151,7 +156,8 @@ def _run_unit(video: Path, video_src: Path, out_dir: Path, rng, transcript: dict
     win = runs.window(rng, duration)
     log(f"[frames] 분석 단위 '{runs.name(rng)}' ({runs.label(rng)}) 시작")
 
-    build = frames_mod.build_frames(video_src, unit, cache_dir=out_dir, window=win)
+    build = frames_mod.build_frames(video_src, unit, cache_dir=out_dir, window=win,
+                                    **thresholds)
     screens = align.attach_dialogue(build["records"], transcript["segments"],
                                     build["duration"], build["events"], win)
     manifest.write_json_atomic(unit / "frames.json", {
@@ -311,7 +317,7 @@ def cmd_transcribe(args) -> int:
 def cmd_frames(args) -> int:
     video = check_video(args.video)
     out_dir = resolve_out(video, args.out)
-    r = run_frames(video, out_dir, args.range)
+    r = run_frames(video, out_dir, args.range, _thresholds(args))
     emit({"ok": True, "out_dir": str(out_dir), **r, "next": NEXT_READ_CONTEXT})
     return EXIT_OK
 
@@ -344,7 +350,7 @@ def cmd_analyze(args) -> int:
         emit({"ok": True, "out_dir": str(out_dir), "stages": stages, "next": "frames"})
         return EXIT_OK
 
-    stages.append(run_frames(video, out_dir, args.range))
+    stages.append(run_frames(video, out_dir, args.range, _thresholds(args)))
     emit({"ok": True, "out_dir": str(out_dir), "stages": stages,
           "index": str(out_dir / "context.md"), "next": NEXT_READ_CONTEXT})
     return EXIT_OK
@@ -434,6 +440,28 @@ def _add_stt_options(sp: argparse.ArgumentParser) -> None:
     sp.add_argument("--language", default=None, help="음성 언어 코드 (기본: 자동 감지)")
 
 
+# 세 신호의 기준선. 이름은 GUI 타임라인의 레인 이름과 같게 둔다 — 그래프에서
+# 보고 CLI에서 바꾸는 흐름이라 두 이름이 어긋나면 매번 번역해야 한다.
+THRESHOLDS = [
+    ("anchor-threshold", "anchor_threshold", frames_mod.DEFAULT_ANCHOR_THRESHOLD,
+     "anchor diff(앵커와의 거리) — 넘으면 사건. 판서가 조금씩 쌓이는 점진 변화를 잡는다"),
+    ("rate-threshold", "rate_threshold", frames_mod.DEFAULT_RATE_THRESHOLD,
+     "순간 변화율(직전 프레임 대비) — 안정 판정선이자, 이것의 8배를 넘는 스파이크는 사건"),
+    ("cut-area-threshold", "cut_area_threshold", frames_mod.DEFAULT_CUT_AREA_THRESHOLD,
+     "컷 면적(확 바뀐 픽셀 비율) — 넘으면 사건. 평균이 아니라 면적이라 희석되지 않는다"),
+]
+
+
+def _add_thresholds(sp: argparse.ArgumentParser) -> None:
+    for flag, dest, default, help_text in THRESHOLDS:
+        sp.add_argument(f"--{flag}", dest=dest, type=float, default=default,
+                        metavar="값", help=f"{help_text} (기본 {default})")
+
+
+def _thresholds(args) -> dict:
+    return {dest: getattr(args, dest) for _f, dest, _d, _h in THRESHOLDS}
+
+
 def _add_range(sp: argparse.ArgumentParser) -> None:
     sp.add_argument("--range", action="append", metavar="시작-끝", default=None,
                     help="분석할 구간(초). 여러 번 주면 그만큼 독립 분석이 생긴다. "
@@ -451,6 +479,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_video(sp)
     _add_stt_options(sp)
     _add_range(sp)
+    _add_thresholds(sp)
     sp.add_argument("--until", choices=["split", "transcribe", "frames"], default="frames")
     sp.set_defaults(func=cmd_analyze)
 
@@ -468,6 +497,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("frames", help="프레임 검출·추출 (transcribe 선행 필요)")
     _add_video(sp)
     _add_range(sp)
+    _add_thresholds(sp)
     sp.set_defaults(func=cmd_frames)
 
     sp = sub.add_parser("frame", help="주문형 단일 프레임 추출 (frames 이후)")

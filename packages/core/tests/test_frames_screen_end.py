@@ -154,3 +154,34 @@ def test_thresholds_do_not_invalidate_the_measurement_cache(monkeypatch, tmp_pat
     calls.clear()
     frames_mod._cached_signals(tmp_path / "v.mkv", out)
     assert calls == [], "측정 캐시는 임계와 무관하게 살아 있어야 한다"
+
+
+def test_cli_thresholds_reach_build_frames(monkeypatch, tmp_path):
+    """CLI로 준 기준선이 실제 판단까지 닿아야 한다. 파서에만 붙어 있고
+    build_frames로 안 넘어가면 옵션이 조용히 무시된다."""
+    from analysis_video import cli
+
+    seen = {}
+    monkeypatch.setattr(cli.frames_mod, "build_frames",
+                        lambda vp, unit, **kw: seen.update(kw) or {
+                            "records": [], "duration": 1.0, "fps": 30.0,
+                            "window": [0.0, 1.0], "events": [], "params": {}})
+    p = cli.build_parser()
+    args = p.parse_args(["frames", "v.mkv", "--anchor-threshold", "0.017",
+                         "--cut-area-threshold", "0.01", "--rate-threshold", "0.003"])
+    passed = cli._thresholds(args)
+    assert passed == {"anchor_threshold": 0.017, "rate_threshold": 0.003,
+                      "cut_area_threshold": 0.01}
+
+
+def test_cli_defaults_come_from_the_library():
+    """기본값을 CLI가 따로 적으면 한쪽만 고쳤을 때 '기본값이라 표시된 값'과
+    '실제로 쓰이는 값'이 갈린다."""
+    import inspect
+
+    from analysis_video import cli
+
+    sig = inspect.signature(frames_mod.build_frames).parameters
+    for _flag, dest, default, _help in cli.THRESHOLDS:
+        assert sig[dest].default == default, f"{dest}의 기본값이 두 군데서 갈렸다"
+    assert cli.frames_mod.DEFAULT_CUT_AREA_THRESHOLD == 0.002

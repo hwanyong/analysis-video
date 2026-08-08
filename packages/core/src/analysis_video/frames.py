@@ -42,6 +42,12 @@ ADAPTIVE_SCHEMA = "adaptive/2"
 # anchor 캐시. v1에는 area_series가 아예 없고 키 이름도 달라 재사용이 불가능하다.
 SIGNALS_SCHEMA = "signals/1"
 
+# 세 신호의 기준선 기본값. CLI가 이 값을 그대로 읽어 쓴다 — 두 군데 적으면
+# 한쪽만 고쳤을 때 "기본값이라고 표시된 값"과 "실제로 쓰이는 값"이 갈린다.
+DEFAULT_ANCHOR_THRESHOLD = 0.02
+DEFAULT_RATE_THRESHOLD = 0.0015
+DEFAULT_CUT_AREA_THRESHOLD = 0.002
+
 # 앵커를 언제 옮길지는 anchor_diff 신호의 내부 사정이라 사용자 임계와 분리한다.
 # 판단(events)의 임계를 바꿔도 측정 캐시가 무효화되지 않게 하는 것이 목적이다.
 ANCHOR_RESET_THRESHOLD = 0.02
@@ -143,8 +149,9 @@ def _cached_adaptive(video_path: Path, out_dir: Path, duration: float,
 def build_frames(video_path: Path, out_dir: Path, *,
                  cache_dir: Path | None = None,
                  window: tuple[float, float] | None = None,
-                 anchor_threshold: float = 0.02, rate_threshold: float = 0.0015,
-                 cut_area_threshold: float = 0.005,
+                 anchor_threshold: float = DEFAULT_ANCHOR_THRESHOLD,
+                 rate_threshold: float = DEFAULT_RATE_THRESHOLD,
+                 cut_area_threshold: float = DEFAULT_CUT_AREA_THRESHOLD,
                  blank_area_threshold: float = 0.001,
                  pair_dup_threshold: float = 0.93) -> dict:
     """out_dir = 이 분석 단위의 디렉터리, cache_dir = 검출 캐시를 둘 곳.
