@@ -48,30 +48,32 @@ def render(out_dir: Path, title: str) -> Path:
     import matplotlib.pyplot as plt
 
     data = np.load(out_dir / "detect_anchor.npz")
-    cum, rate = data["cum_series"], data["rate_series"]
+    anchor_s, rate, area = data["anchor_series"], data["rate_series"], data["area_series"]
     fps = float(data["fps"])
-    cum_threshold = float(data["cum_threshold"])
+    anchor_threshold = float(data["anchor_threshold"])
     rate_threshold = float(data["rate_threshold"])
+    cut_area_threshold = float(data["cut_area_threshold"])
 
     frames_info = json.loads((out_dir / "frames.json").read_text(encoding="utf-8"))
     transcript = json.loads((out_dir / "transcript.json").read_text(encoding="utf-8"))
     records = frames_info["records"]
     events = frames_info["anchor_events"]
 
-    n = len(cum)
+    n = len(anchor_s)
     times = data["time_series"] if "time_series" in data else np.arange(n) / fps
     duration = float(times[-1]) if n else 0.0
 
     width = max(12, duration / 20)
-    fig, (ax_v, ax_r, ax_a) = plt.subplots(
-        3, 1, figsize=(width, 11), sharex=True,
-        gridspec_kw={"height_ratios": [3, 1, 2]},
+    fig, (ax_v, ax_r, ax_c, ax_a) = plt.subplots(
+        4, 1, figsize=(width, 13), sharex=True,
+        gridspec_kw={"height_ratios": [3, 1, 1, 2]},
     )
     fig.suptitle(title, fontsize=14)
 
-    # ---- 상단: 누적(anchor 대비) diff + 판정 레코드 ----
-    ax_v.plot(times, cum, color="#1f77b4", lw=0.6, label="누적diff(anchor 대비)")
-    ax_v.axhline(cum_threshold, color="red", ls="--", lw=1, label=f"cum_threshold={cum_threshold}")
+    # ---- 상단: anchor diff(앵커 대비) + 판정 레코드 ----
+    ax_v.plot(times, anchor_s, color="#1f77b4", lw=0.6, label="anchor diff(앵커 대비)")
+    ax_v.axhline(anchor_threshold, color="red", ls="--", lw=1,
+                 label=f"anchor_threshold={anchor_threshold}")
 
     for e in events:
         start = e.get("transition_start_time", e["transition_start_idx"] / fps)
@@ -85,8 +87,8 @@ def render(out_dir: Path, title: str) -> Path:
         color = STATUS_COLOR[r["status"]]
         marker = "*" if "importance-point" in r["sources"] else "^"
         ms = 11 if marker == "*" else 8
-        ax_v.plot(r["time"], cum[idx], marker=marker, color=color, ms=ms, zorder=5)
-        ax_v.text(r["time"], cum[idx], f" {i}", fontsize=6, va="bottom", color=color)
+        ax_v.plot(r["time"], anchor_s[idx], marker=marker, color=color, ms=ms, zorder=5)
+        ax_v.text(r["time"], anchor_s[idx], f" {i}", fontsize=6, va="bottom", color=color)
 
     ax_v.plot([], [], marker="v", color="blue", ms=7, lw=0, label="앵커(기준커서)")
     ax_v.plot([], [], marker="^", color="green", ms=8, lw=0, label="채택 프레임")
@@ -94,7 +96,7 @@ def render(out_dir: Path, title: str) -> Path:
     ax_v.plot([], [], marker="*", color="green", ms=11, lw=0, label="importance-point")
     ax_v.axvspan(0, 0, color="orange", alpha=0.15, label="전환구간")
     n_acc = sum(1 for r in records if r["status"] == "accepted")
-    ax_v.set_ylabel("누적 diff (anchor 대비)")
+    ax_v.set_ylabel("anchor diff (앵커 대비)")
     ax_v.legend(loc="upper right", fontsize=8, ncol=3)
     ax_v.set_title(f"영상: 후보 {len(records)}건 (채택 {n_acc} / 탈락 {len(records) - n_acc})",
                    fontsize=10)
@@ -105,6 +107,13 @@ def render(out_dir: Path, title: str) -> Path:
                  label=f"rate_threshold={rate_threshold} (전환 진행중 판정)")
     ax_r.set_ylabel("순간변화율\n(인접프레임)")
     ax_r.legend(loc="upper right", fontsize=8)
+
+    # ---- 컷 면적: 한 프레임 만에 확 바뀐 픽셀의 비율 ----
+    ax_c.plot(times, area, color="#9467bd", lw=0.5)
+    ax_c.axhline(cut_area_threshold, color="red", ls="--", lw=1,
+                 label=f"cut_area_threshold={cut_area_threshold} (넘으면 컷)")
+    ax_c.set_ylabel("컷 면적\n(변한 픽셀 비율)")
+    ax_c.legend(loc="upper right", fontsize=8)
 
     # ---- 하단: STT 단어 밀도 + importance-point ----
     words = transcript.get("words", [])

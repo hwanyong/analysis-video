@@ -28,7 +28,8 @@ class Store(QObject):
         self.rejected: list[dict] = []
         self.requested: list[dict] = []
         self.segments: list[dict] = []
-        self.series: dict | None = None    # times/cum/rate/cum_threshold/rate_threshold
+        # times/anchor/rate/area + anchor_threshold/rate_threshold/cut_area_threshold
+        self.series: dict | None = None
         self.transitions: list[tuple[float, float]] = []  # (전환 시작, 트리거) 구간
         self.duration: float = 0.0
         self.point_times: list[float] = []        # 원시 point 시각 (★를 찍는 자리)
@@ -85,12 +86,14 @@ class Store(QObject):
             try:
                 d = np.load(npz)
                 fps = float(d["fps"])
-                n = len(d["cum_series"])
+                n = len(d["anchor_series"])
                 times = d["time_series"] if "time_series" in d else np.arange(n) / fps
                 self.series = {
-                    "times": times, "cum": d["cum_series"], "rate": d["rate_series"],
-                    "cum_threshold": float(d["cum_threshold"]),
+                    "times": times, "anchor": d["anchor_series"],
+                    "rate": d["rate_series"], "area": d["area_series"],
+                    "anchor_threshold": float(d["anchor_threshold"]),
                     "rate_threshold": float(d["rate_threshold"]),
+                    "cut_area_threshold": float(d["cut_area_threshold"]),
                 }
                 # 앵커가 흔들리기 시작해(transition_start) 안정 판정으로 트리거되기까지의
                 # 구간 — 검출기가 "왜 여기서 끊었는가"를 설명하는 유일한 증거다
@@ -163,13 +166,14 @@ class Store(QObject):
         """검출 근거별 채택 프레임 수 — 복합 근거는 각 근거에 모두 계상한다."""
         return Counter(s for f in self.frames for s in f["sources"])
 
-    def series_at(self, t: float) -> tuple[float, float] | None:
-        """t 시점의 (누적 diff, 순간 변화율) 원값 — 정규화 전이라 그대로 읽힌다."""
+    def series_at(self, t: float) -> tuple[float, float, float] | None:
+        """t 시점의 (anchor diff, 순간 변화율, 컷 면적) 원값 — 정규화 전 그대로."""
         if self.series is None:
             return None
         i = int(np.searchsorted(self.series["times"], t))
         i = min(max(i, 0), len(self.series["times"]) - 1)
-        return float(self.series["cum"][i]), float(self.series["rate"][i])
+        return (float(self.series["anchor"][i]), float(self.series["rate"][i]),
+                float(self.series["area"][i]))
 
     @staticmethod
     def _jump(sorted_times: list[float], t: float, forward: bool) -> float | None:

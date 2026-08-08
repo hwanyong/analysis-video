@@ -1,4 +1,10 @@
-"""프레임 후보 통합 — initial ∪ anchor-diff ∪ AdaptiveDetector ∪ importance-points.
+"""프레임 후보 통합 — initial ∪ anchor-diff(-pre) ∪ AdaptiveDetector ∪ importance-points.
+
+anchor-diff 이벤트는 후보를 **둘** 낸다: 전환 직전(anchor-diff-pre = 사라지려는
+화면의 마지막 안정 프레임)과 전환 후 트리거(anchor-diff = 새 화면). 어느 한쪽만
+잡으면 반드시 잃는다 — 직후만 잡으면 판서 완성본을 매번 놓치고, 직전만 잡으면
+전부 한 칸씩 밀리며 마지막 화면이 사라진다. 정적 슬라이드에서는 둘이 같은
+화면이므로 중복 게이트가 하나로 접는다.
 
 판정 기록 보존 원칙: 어떤 후보도 조용히 사라지지 않는다. 탈락 이미지는
 frames/rejected/로 이동하고 레코드에 사유가 남으며, phash 중복으로 탈락해도
@@ -24,38 +30,48 @@ from .errors import log
 
 # 프레임 번호를 실제 PTS로 옮기게 된 이후의 adaptive 캐시 (v1은 선언 fps 근사였다)
 ADAPTIVE_SCHEMA = "adaptive/2"
+# 컷 면적(cut_area)을 전환 검출에 도입하고 cum_* → anchor_* 로 개명한 이후의
+# anchor 캐시. v1에는 area_series가 아예 없고 키 이름도 달라 재사용이 불가능하다.
+ANCHOR_SCHEMA = "anchor/2"
 
 
 def _gray_for_compare(img_path: Path, w: int = 400, h: int = 225) -> np.ndarray:
     return np.asarray(Image.open(img_path).convert("L").resize((w, h)))
 
 
-def _cached_anchor(video_path: Path, out_dir: Path,
-                   cum_threshold: float, rate_threshold: float) -> dict:
+def _cached_anchor(video_path: Path, out_dir: Path, anchor_threshold: float,
+                   rate_threshold: float, cut_area_threshold: float) -> dict:
     cache = out_dir / "detect_anchor.npz"
     if cache.exists():
         # 캐시는 수치 배열 + JSON 문자열(유니코드 배열)만 담는다 — pickle 불필요/금지
         data = np.load(cache)
-        if (float(data["cum_threshold"]) == cum_threshold
+        # 구버전은 키 구성 자체가 달라 조회하면 KeyError로 죽는다. 스키마부터 본다.
+        schema = str(data["schema"]) if "schema" in data else ""
+        if schema != ANCHOR_SCHEMA:
+            log("[frames] anchor-diff 캐시가 구버전 — 재검출합니다")
+        elif (float(data["anchor_threshold"]) == anchor_threshold
                 and float(data["rate_threshold"]) == rate_threshold
-                and "events_json" in data):
+                and float(data["cut_area_threshold"]) == cut_area_threshold):
             log("[frames] anchor-diff 캐시 재사용 (detect_anchor.npz)")
             return {
-                "fps": float(data["fps"]), "n_frames": int(data["cum_series"].shape[0]),
-                "cum_series": data["cum_series"], "rate_series": data["rate_series"],
-                "time_series": data["time_series"],
+                "fps": float(data["fps"]), "n_frames": int(data["anchor_series"].shape[0]),
+                "anchor_series": data["anchor_series"], "rate_series": data["rate_series"],
+                "area_series": data["area_series"], "time_series": data["time_series"],
                 "events": json.loads(str(data["events_json"])),
-                "cum_threshold": cum_threshold, "rate_threshold": rate_threshold,
+                "anchor_threshold": anchor_threshold, "rate_threshold": rate_threshold,
+                "cut_area_threshold": cut_area_threshold,
             }
 
     log("[frames] anchor-diff 전환추적 실행 중...")
     result = anchor.transition_aware_anchor_diff(
-        video_path, cum_threshold=cum_threshold, rate_threshold=rate_threshold)
+        video_path, anchor_threshold=anchor_threshold, rate_threshold=rate_threshold,
+        cut_area_threshold=cut_area_threshold)
     np.savez_compressed(
-        cache,
-        cum_series=result["cum_series"], rate_series=result["rate_series"],
-        time_series=result["time_series"], fps=result["fps"],
-        cum_threshold=cum_threshold, rate_threshold=rate_threshold,
+        cache, schema=ANCHOR_SCHEMA,
+        anchor_series=result["anchor_series"], rate_series=result["rate_series"],
+        area_series=result["area_series"], time_series=result["time_series"],
+        fps=result["fps"], anchor_threshold=anchor_threshold,
+        rate_threshold=rate_threshold, cut_area_threshold=cut_area_threshold,
         events_json=json.dumps(result["events"]))
     return result
 
@@ -87,7 +103,8 @@ def _cached_adaptive(video_path: Path, out_dir: Path, duration: float,
 
 
 def build_frames(video_path: Path, out_dir: Path, points: list[dict], *,
-                 cum_threshold: float = 0.02, rate_threshold: float = 0.0015,
+                 anchor_threshold: float = 0.02, rate_threshold: float = 0.0015,
+                 cut_area_threshold: float = 0.04,
                  yavg_floor: float = 5.0, phash_dup_distance: int = 4,
                  ssim_dup_threshold: float = 0.9,
                  near_distance: float = 2.0) -> dict:
@@ -98,8 +115,10 @@ def build_frames(video_path: Path, out_dir: Path, points: list[dict], *,
 
     duration = media.get_duration(video_path)
 
-    anchor_result = _cached_anchor(video_path, out_dir, cum_threshold, rate_threshold)
+    anchor_result = _cached_anchor(video_path, out_dir, anchor_threshold,
+                                   rate_threshold, cut_area_threshold)
     fps = anchor_result["fps"]
+    time_series = anchor_result["time_series"]
 
     def new_candidate(time: float, detected_at: float, source: str) -> dict:
         return {"time": time, "detected_at": detected_at,
@@ -111,6 +130,14 @@ def build_frames(video_path: Path, out_dir: Path, points: list[dict], *,
     candidates = [new_candidate(initial_t, 0.0, "initial")]
 
     for e in anchor_result["events"]:
+        # 전환 '직전' 프레임 = 사라지려는 화면의 마지막 안정 상태. 판서 영상에서
+        # 이것이 완성된 판서이고, 트리거(전환 후)는 이미 지워진 새 화면이다.
+        # 컷 전환은 실측 중앙값 1프레임이라 트리거만 잡으면 완성본을 늘 놓친다.
+        # 정적 슬라이드에서는 둘이 사실상 같은 화면이므로 중복 게이트가 접는다.
+        si = e.get("transition_start_idx")
+        if si is not None and 0 < si < len(time_series):
+            t_pre = float(time_series[si - 1])
+            candidates.append(new_candidate(t_pre, t_pre, "anchor-diff-pre"))
         # 전환추적된 트리거는 이미 안정 상태에서 잡힌 것 — 추가 안정화 불필요
         t = e.get("trigger_time", e["trigger_idx"] / fps)
         candidates.append(new_candidate(t, t, "anchor-diff"))
@@ -216,7 +243,8 @@ def build_frames(video_path: Path, out_dir: Path, points: list[dict], *,
         "records": records, "duration": duration, "fps": fps,
         "anchor_events": anchor_result["events"],
         "params": {
-            "cum_threshold": cum_threshold, "rate_threshold": rate_threshold,
+            "anchor_threshold": anchor_threshold, "rate_threshold": rate_threshold,
+            "cut_area_threshold": cut_area_threshold,
             "yavg_floor": yavg_floor, "phash_dup_distance": phash_dup_distance,
             "ssim_dup_threshold": ssim_dup_threshold,
             "near_distance": near_distance,

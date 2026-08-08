@@ -7,9 +7,11 @@
 
 레인(위→아래): 채택 프레임(검출 근거별 색, 복합 근거는 흰 테두리), 탈락 후보 ✗,
 주문 추출 ◆, importance-point ★, STT 세그먼트, GT 플래그, 그리고 아래 절반이
-anchor-diff 진단 — 전환 구간 음영 위에 누적 diff와 순간 변화율을 각자의 기준선과
-함께 따로 쌓는다. 두 곡선은 읽는 방향이 반대다(누적은 넘겨야, 순간은 내려가야
-트리거) — 겹쳐 그리면 해독이 불가능해서 분리했다.
+anchor-diff 진단 — 전환 구간 음영 위에 anchor diff·순간 변화율·컷 면적을 각자의
+기준선과 함께 따로 쌓는다. 세 곡선은 읽는 방향이 다르다(anchor diff와 컷 면적은
+넘겨야 전환 시작, 순간 변화율은 내려가야 트리거) — 겹쳐 그리면 해독이 불가능해서
+분리했다. 전환 시작은 anchor diff(점진 누적)와 컷 면적(컷)의 OR라 둘 다 보여야
+"왜 여기서 끊었나"를 읽을 수 있다.
 
 드래그의 의미는 도구가 정한다. 기본은 스크럽 — 검토 작업의 대부분이 시간축을
 훑는 일이라 드래그가 곧 재생 위치 이동이어야 하고, 화면은 놓기 전에 따라와야
@@ -46,28 +48,32 @@ LANE_REQUESTED = 7.05
 LANE_POINTS = 6.6
 LANE_STT = (5.95, 6.3)
 LANE_FLAGS = 5.5
-LANE_CUM = (2.7, 4.6)      # 누적 diff — 기준선을 넘겨야 트리거 후보
-LANE_RATE = (0.3, 2.2)     # 순간 변화율 — 기준선 아래로 내려가야 트리거
-DIFF_BAND = (LANE_RATE[0], LANE_CUM[1])   # 전환 구간 음영이 덮는 범위
+LANE_ANCHOR = (3.4, 4.6)   # anchor diff — 기준선을 넘겨야 전환 시작(점진 누적)
+LANE_RATE = (1.85, 3.05)   # 순간 변화율 — 기준선 아래로 내려가야 트리거
+LANE_AREA = (0.3, 1.5)     # 컷 면적 — 기준선을 넘겨야 전환 시작(컷)
+DIFF_BAND = (LANE_AREA[0], LANE_ANCHOR[1])   # 전환 구간 음영이 덮는 범위
 
 LANE_TICKS = [
     (sum(LANE_FRAMES) / 2, "프레임"), (LANE_REJECTED, "탈락"),
     (LANE_REQUESTED, "주문"), (LANE_POINTS, "points"),
     (sum(LANE_STT) / 2, "STT"), (LANE_FLAGS, "플래그"),
-    (sum(LANE_CUM) / 2, "누적 diff"), (sum(LANE_RATE) / 2, "순간 변화율"),
+    (sum(LANE_ANCHOR) / 2, "anchor diff"), (sum(LANE_RATE) / 2, "순간 변화율"),
+    (sum(LANE_AREA) / 2, "컷 면적"),
 ]
 
 # 정규화 배율: 임계값이 각 레인의 이 비율 위치에 오도록 잡는다
-CUM_FULL = 4.0    # cum == 4×임계에서 레인 천장
-RATE_FULL = 6.0   # rate == 6×임계에서 레인 천장
+ANCHOR_FULL = 4.0   # anchor diff == 4×임계에서 레인 천장
+RATE_FULL = 6.0     # rate == 6×임계에서 레인 천장
+AREA_FULL = 4.0     # cut_area == 4×임계에서 레인 천장
 
 SOURCE_COLORS = {
     "anchor-diff": (60, 160, 90),
+    "anchor-diff-pre": (40, 200, 190),
     "adaptive": (70, 130, 205),
     "importance-point": (230, 194, 41),
     "initial": (150, 150, 150),
 }
-SOURCE_ORDER = ["importance-point", "adaptive", "anchor-diff", "initial"]
+SOURCE_ORDER = ["importance-point", "adaptive", "anchor-diff-pre", "anchor-diff", "initial"]
 
 MIN_SPAN = 2.0        # 최대 확대에서 보이는 시간 폭(초)
 ZOOM_STEPS = 1000     # 배율 슬라이더 해상도 (로그 눈금)
@@ -304,12 +310,18 @@ class TimelineWindow(ChildWindow):
                 " 정답. F 추가/취소, ▼ ⇧클릭 삭제, G 이동. ⑥ 비교 리포트가 검출과"
                 " 대조해 recall·precision을 낸다.</span>", ""]
         if st.series is not None:
-            cth, rth = st.series["cum_threshold"], st.series["rate_threshold"]
+            ath = st.series["anchor_threshold"]
+            rth = st.series["rate_threshold"]
+            cth = st.series["cut_area_threshold"]
             tail += [
-                f"{_swatch((90, 160, 255), '━')} 누적 diff",
-                f"&nbsp;&nbsp;<span style='color:#f55'>┈</span> {cth} <b>넘으면</b> 후보",
-                f"{_swatch((255, 160, 60), '━')} 순간 변화율",
+                "<span style='color:#888'>전환 시작 = anchor diff <b>또는</b> 컷 면적이"
+                " 기준을 넘을 때. 그 뒤 순간 변화율이 잦아들면 트리거.</span>", "",
+                f"{_swatch((90, 160, 255), '━')} anchor diff (앵커와의 거리)",
+                f"&nbsp;&nbsp;<span style='color:#f55'>┈</span> {ath} <b>넘으면</b> 전환 시작",
+                f"{_swatch((255, 160, 60), '━')} 순간 변화율 (직전 프레임 대비)",
                 f"&nbsp;&nbsp;<span style='color:#f55'>┈</span> {rth} <b>아래로</b> 내려가면 트리거",
+                f"{_swatch((190, 130, 255), '━')} 컷 면적 (확 바뀐 픽셀 비율)",
+                f"&nbsp;&nbsp;<span style='color:#f55'>┈</span> {cth} <b>넘으면</b> 컷",
             ]
         else:
             tail.append("<span style='color:#777'>detect_anchor.npz 없음 — 변화량 미표시"
@@ -423,9 +435,11 @@ class TimelineWindow(ChildWindow):
         self._pw.setLimits(xMin=-duration * 0.02, xMax=duration * 1.02)
         self._pw.setXRange(0, duration, padding=0.01)
 
-        # 레인 경계 — 이산 마크 영역과 변화량 영역, 그리고 두 곡선 사이를 가른다.
+        # 레인 경계 — 이산 마크 영역과 변화량 영역, 그리고 세 곡선 사이를 가른다.
         # 경계가 없으면 곡선 스파이크가 위 레인의 마크처럼 읽힌다(구 레이아웃의 결함).
-        for y in ((LANE_FLAGS + LANE_CUM[1]) / 2, (LANE_CUM[0] + LANE_RATE[1]) / 2):
+        for y in ((LANE_FLAGS + LANE_ANCHOR[1]) / 2,
+                  (LANE_ANCHOR[0] + LANE_RATE[1]) / 2,
+                  (LANE_RATE[0] + LANE_AREA[1]) / 2):
             self._pw.addItem(pg.InfiniteLine(pos=y, angle=0, movable=False,
                                              pen=pg.mkPen((70, 70, 70), width=1)))
 
@@ -480,15 +494,22 @@ class TimelineWindow(ChildWindow):
         self._update_legend()
 
     def _plot_diff(self, st) -> None:
-        """누적 diff와 순간 변화율을 각자의 레인에 기준선과 함께 쌓는다.
+        """anchor diff·순간 변화율·컷 면적을 각자의 레인에 기준선과 함께 쌓는다.
 
-        겹쳐 그리면 안 되는 이유: 트리거 조건이 `누적 > 임계` **그리고**
-        `순간변화율 ≤ 임계`라 두 곡선의 읽는 방향이 반대다."""
+        겹쳐 그리면 안 되는 이유: 세 곡선의 읽는 방향이 다르다. 전환 시작은
+        `anchor diff > 임계` **또는** `컷 면적 > 임계`(둘 다 넘겨야 하는 쪽),
+        트리거는 `순간변화율 ≤ 임계`(내려가야 하는 쪽)다."""
         s = st.series
-        times, cth, rth = s["times"], s["cum_threshold"], s["rate_threshold"]
+        times = s["times"]
+        ath, rth, cth = (s["anchor_threshold"], s["rate_threshold"],
+                         s["cut_area_threshold"])
         for series, thr, lane, full, color, label in (
-                (s["cum"], cth, LANE_CUM, CUM_FULL, (90, 160, 255), f"{cth} ↑ 넘으면"),
-                (s["rate"], rth, LANE_RATE, RATE_FULL, (255, 160, 60), f"{rth} ↓ 내려가면")):
+                (s["anchor"], ath, LANE_ANCHOR, ANCHOR_FULL, (90, 160, 255),
+                 f"{ath} ↑ 넘으면"),
+                (s["rate"], rth, LANE_RATE, RATE_FULL, (255, 160, 60),
+                 f"{rth} ↓ 내려가면"),
+                (s["area"], cth, LANE_AREA, AREA_FULL, (190, 130, 255),
+                 f"{cth} ↑ 넘으면 컷")):
             lo, hi = lane
             self._pw.addItem(pg.PlotDataItem(
                 times, lo + (hi - lo) * np.clip(series / (full * thr), 0, 1),
@@ -541,13 +562,17 @@ class TimelineWindow(ChildWindow):
             parts.append(f"<span style='color:#ccc'>“{text[:70]}”</span>")
         sv = st.series_at(t)
         if sv is not None:
-            cum, rate = sv
-            cth, rate_th = st.series["cum_threshold"], st.series["rate_threshold"]
+            anchor_d, rate, area = sv
+            ath = st.series["anchor_threshold"]
+            rate_th = st.series["rate_threshold"]
+            cth = st.series["cut_area_threshold"]
             parts.append(
-                f"<span style='color:#6af'>누적 {cum:.4f}</span>"
-                f"{'↑' if cum > cth else ''} · "
+                f"<span style='color:#6af'>anchor {anchor_d:.4f}</span>"
+                f"{'↑' if anchor_d > ath else ''} · "
                 f"<span style='color:#fa6'>순간 {rate:.6f}</span>"
-                f"{'' if rate > rate_th else '↓'}")
+                f"{'' if rate > rate_th else '↓'} · "
+                f"<span style='color:#b8f'>면적 {area:.4f}</span>"
+                f"{'↑' if area > cth else ''}")
         self._readout.setText(" &nbsp;|&nbsp; ".join(parts))
 
     # ---------- 동기 ----------

@@ -58,6 +58,24 @@ def test_point_lands_on_the_frame_it_produced(qapp, tmp_path):
     assert st.dup_target(500.0) is None
 
 
+def test_series_is_loaded_from_real_npz(qapp, analyzed):
+    """Store는 npz 로딩 실패를 삼키고 series=None으로 둔다 — 키 이름이 어긋나면
+    그래프만 조용히 사라지고 테스트는 통과한다. 그 침묵을 여기서 깬다."""
+    video, out_dir = analyzed
+    st = Store(video, out_dir)
+    assert st.series is not None, "detect_anchor.npz를 못 읽었다(키 불일치 의심)"
+    for key in ("times", "anchor", "rate", "area",
+                "anchor_threshold", "rate_threshold", "cut_area_threshold"):
+        assert key in st.series, f"series에 {key}가 없다"
+    n = len(st.series["times"])
+    assert len(st.series["anchor"]) == n and len(st.series["rate"]) == n
+    assert len(st.series["area"]) == n, "컷 면적 시계열 길이가 어긋난다"
+
+    sv = st.series_at(st.duration / 2)
+    assert sv is not None and len(sv) == 3, "판독은 (anchor, rate, area) 셋을 낸다"
+    assert all(isinstance(v, float) for v in sv)
+
+
 def test_source_counts_span_composites(qapp, tmp_path):
     out = tmp_path / "y.analysis"
     _write(out,
