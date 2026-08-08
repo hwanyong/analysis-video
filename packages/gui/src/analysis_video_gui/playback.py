@@ -15,6 +15,9 @@ QtMultimedia 동봉 FFmpeg가 AV1을 디코드하지 못함이 스파이크로 �
 시킹/스텝
   · seek 세대(generation) 카운터로 디코더에 통지 — 구세대 프레임은 큐에서 폐기
   · 일시정지 중 seek/스텝은 prime 모드로 목표 pts 이상 첫 프레임 1장만 표시
+스크럽(드래그 중 실시간 미리보기)
+  · 위치 시그널은 마우스를 따라 즉시, 영상은 요청 병합(미해결 요청 1건)으로
+    디코더가 소화하는 만큼만 — 요청이 밀려 화면이 멎는 일이 없다
 """
 import queue
 import threading
@@ -252,6 +255,12 @@ class PlayerEngine(QObject):
         self._prime_deadline = 0.0   # 충족 불가능한 prime의 영구 대기 방지
         self._pending: tuple | None = None  # 큐에서 꺼냈지만 아직 미래인 프레임 1장
 
+        self._scrubbing = False
+        self._scrub_resume = False          # 드래그 종료 후 재생을 이어갈지
+        self._scrub_target = 0.0            # 마우스가 가리키는 최신 시각
+        self._scrub_served: float | None = None  # 디코더에 실제로 보낸 시각
+        self._scrub_inflight = False        # 응답 대기 중인 요청이 있는가
+
         self._q: queue.Queue = queue.Queue(maxsize=4)
         self._video = _VideoDecodeThread(video_path, self._q)
         self._video.start()
@@ -296,7 +305,12 @@ class PlayerEngine(QObject):
 
     @property
     def playing(self) -> bool:
-        return self._playing
+        # 스크럽 중에는 클록이 서 있어도 '드래그를 놓으면 재생'이 논리적 재생 상태다
+        return self._scrub_resume if self._scrubbing else self._playing
+
+    @property
+    def scrubbing(self) -> bool:
+        return self._scrubbing
 
     def position(self) -> float:
         if not self._playing:
@@ -313,9 +327,15 @@ class PlayerEngine(QObject):
     # ---------- 제어 API ----------
 
     def toggle(self) -> None:
-        self.pause() if self._playing else self.play()
+        self.pause() if self.playing else self.play()
 
     def play(self) -> None:
+        if self._scrubbing:
+            # 드래그 중 재생 지시는 '놓는 순간부터' 이행한다 — 지금 클록을 돌리면
+            # 마우스와 재생이 서로 위치를 다투게 된다
+            self._scrub_resume = True
+            self.stateChanged.emit(True)
+            return
         if self._playing:
             return
         if self.duration and self._pos >= self.duration - 0.05:
@@ -326,12 +346,20 @@ class PlayerEngine(QObject):
         self.stateChanged.emit(True)
 
     def pause(self) -> None:
+        if self._scrubbing:
+            self._scrub_resume = False
+            self.stateChanged.emit(False)
+            return
         if not self._playing:
             return
+        self._halt()
+        self.stateChanged.emit(False)
+
+    def _halt(self) -> None:
+        """클록과 오디오만 세운다 — 상태 시그널 발신은 호출자가 결정한다."""
         self._pos = self.position()
         self._playing = False
         self._ring.active = False
-        self.stateChanged.emit(False)
 
     def seek(self, t: float) -> None:
         t = min(max(0.0, t), max(0.0, self.duration - 0.05))
@@ -349,6 +377,61 @@ class PlayerEngine(QObject):
 
     def seek_relative(self, dt: float) -> None:
         self.seek(self.position() + dt)
+
+    # ---------- 스크럽 ----------
+
+    def begin_scrub(self) -> None:
+        """드래그 시작. 재생 중이었다면 클록·오디오를 세우되 stateChanged는 내지
+        않는다 — 드래그는 일시적 조작이고, 재생 버튼이 깜빡이면 오히려 혼란스럽다."""
+        if self._scrubbing:
+            return
+        self._scrub_resume = self._playing
+        if self._playing:
+            self._halt()
+        self._scrubbing = True
+        self._scrub_target = self._pos
+        self._scrub_served = None
+        self._scrub_inflight = False
+
+    def scrub_to(self, t: float) -> None:
+        """드래그 위치 갱신 — 옵저버 창들은 즉시, 영상 프레임은 디코더 속도만큼."""
+        if not self._scrubbing:
+            self.begin_scrub()
+        t = min(max(0.0, t), max(0.0, self.duration - 0.05))
+        self._pos = t
+        self._scrub_target = t
+        self.positionChanged.emit(t)
+        self._pump_scrub()
+
+    def end_scrub(self) -> None:
+        """드래그 종료 — 최종 위치로 정식 시크(오디오 포함)하고 필요하면 재생 재개."""
+        if not self._scrubbing:
+            return
+        self._scrubbing = False
+        self._scrub_inflight = False
+        self._scrub_served = None
+        resume, self._scrub_resume = self._scrub_resume, False
+        self.seek(self._scrub_target)
+        if resume:
+            self.play()
+
+    def _pump_scrub(self) -> None:
+        """요청 병합 — 디코더에 미해결 요청은 항상 한 건만 띄운다.
+
+        응답이 오면 그 사이 움직인 최신 목표로 다시 요청하므로, 프레임 솎아내기가
+        마우스 속도가 아니라 디코더 속도에 맞춰 자동으로 일어난다. 드래그 이벤트마다
+        seek을 걸면 매번 세대가 바뀌어 in-flight 프레임이 전량 폐기되고, 화면이
+        드래그를 놓을 때까지 한 장도 갱신되지 않는다."""
+        if not self._scrubbing or self._scrub_inflight:
+            return
+        if self._scrub_served is not None \
+                and abs(self._scrub_target - self._scrub_served) < 1e-6:
+            return
+        self._scrub_served = self._scrub_target
+        self._scrub_inflight = True
+        self._drain_queue()
+        self._video.request_seek(self._scrub_target)
+        self._arm_prime(self._scrub_target)
 
     def step_frame(self, direction: int = 1) -> None:
         self.pause()
@@ -429,12 +512,21 @@ class PlayerEngine(QObject):
                 if pts < self._prime_target - 0.6 / self.fps:
                     continue
                 self._prime = False
-                self._pos = pts
                 self.frameReady.emit(img, pts)
-                self.positionChanged.emit(pts)
+                if self._scrubbing:
+                    # 드래그 중 위치의 원천은 마우스다. 디코드된 pts로 되돌리면
+                    # 커서가 뒤로 튄다 — 프레임만 갱신하고 다음 목표를 요청한다.
+                    self._scrub_inflight = False
+                    self._pump_scrub()
+                else:
+                    self._pos = pts
+                    self.positionChanged.emit(pts)
                 return
             if _time.perf_counter() > self._prime_deadline:
                 self._prime = False  # 영상 끝 등 — 목표 이상 프레임이 없음
+                if self._scrubbing:
+                    self._scrub_inflight = False
+                    self._pump_scrub()
             return
 
         if not self._playing:

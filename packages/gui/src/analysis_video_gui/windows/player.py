@@ -1,8 +1,13 @@
-"""플레이어 창 — 영상 표시 + 트랜스포트 (버튼·슬라이더·배속·음소거·시간)."""
+"""플레이어 창 — 영상 표시 + 트랜스포트 (버튼·슬라이더·배속·음소거·시간).
+
+슬라이더는 드래그하는 동안 화면이 따라오는 스크럽 방식이다(놓을 때 한 번 점프가
+아니라). 검토 작업의 대부분이 "이 근처 어딘가"를 눈으로 찾는 일이라, 놓기 전까지
+화면이 멈춰 있으면 찍고-확인하고-다시 찍는 왕복이 된다.
+"""
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage, QPainter
 from PySide6.QtWidgets import (QComboBox, QHBoxLayout, QLabel, QPushButton, QSlider,
-                               QVBoxLayout, QWidget)
+                               QStyle, QStyleOptionSlider, QVBoxLayout, QWidget)
 
 from ..playback import RATES
 from ..session import Session
@@ -29,6 +34,49 @@ class VideoWidget(QWidget):
             y = (self.height() - scaled.height()) // 2
             p.drawImage(x, y, scaled)
         p.end()
+
+
+class SeekSlider(QSlider):
+    """어디를 눌러도 그 지점을 잡는 슬라이더.
+
+    기본 QSlider는 스타일에 따라 그루브 클릭이 페이지 스텝이라, 바를 집어 끄는
+    조작이 손끝과 어긋난다. 눌린 지점을 핸들 위치로 삼고 그대로 드래그로 잇는다.
+    """
+
+    def mousePressEvent(self, ev) -> None:
+        if ev.button() == Qt.MouseButton.LeftButton:
+            self.setSliderDown(True)          # sliderPressed → 스크럽 시작
+            self._set_from_x(ev.position().x())
+            ev.accept()
+            return
+        super().mousePressEvent(ev)
+
+    def mouseMoveEvent(self, ev) -> None:
+        if self.isSliderDown():
+            self._set_from_x(ev.position().x())
+            ev.accept()
+            return
+        super().mouseMoveEvent(ev)
+
+    def mouseReleaseEvent(self, ev) -> None:
+        if ev.button() == Qt.MouseButton.LeftButton and self.isSliderDown():
+            self.setSliderDown(False)         # sliderReleased → 스크럽 종료
+            ev.accept()
+            return
+        super().mouseReleaseEvent(ev)
+
+    def _set_from_x(self, x: float) -> None:
+        opt = QStyleOptionSlider()
+        self.initStyleOption(opt)
+        style = self.style()
+        groove = style.subControlRect(QStyle.ComplexControl.CC_Slider, opt,
+                                      QStyle.SubControl.SC_SliderGroove, self)
+        handle = style.subControlRect(QStyle.ComplexControl.CC_Slider, opt,
+                                      QStyle.SubControl.SC_SliderHandle, self)
+        span = max(groove.width() - handle.width(), 1)
+        pos = int(x) - groove.x() - handle.width() // 2
+        self.setValue(QStyle.sliderValueFromPosition(
+            self.minimum(), self.maximum(), pos, span))
 
 
 class PlayerWindow(ChildWindow):
@@ -79,14 +127,15 @@ class PlayerWindow(ChildWindow):
         bar.addWidget(self._time)
         layout.addLayout(bar)
 
-        self._slider = QSlider(Qt.Orientation.Horizontal)
+        self._slider = SeekSlider(Qt.Orientation.Horizontal)
         self._slider.setRange(0, int(e.duration * 1000))
         self._slider.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._slider.sliderReleased.connect(
-            lambda: e.seek(self._slider.value() / 1000.0))
-        self._slider.sliderMoved.connect(
-            lambda v: self._time.setText(
-                f"{fmt_time(v / 1000.0)} / {fmt_time(e.duration)}"))
+        self._slider.setToolTip("드래그하면 화면이 실시간으로 따라옵니다")
+        self._slider.sliderPressed.connect(e.begin_scrub)
+        self._slider.sliderReleased.connect(e.end_scrub)
+        # valueChanged로 받으면 드래그·그루브 클릭·휠이 한 경로로 들어온다.
+        # 되먹임은 _on_pos의 blockSignals가 차단한다.
+        self._slider.valueChanged.connect(self._on_slider_value)
         layout.addWidget(self._slider)
 
         self.bind(e.frameReady, self._on_frame)
@@ -104,12 +153,19 @@ class PlayerWindow(ChildWindow):
     def _on_muted(self, muted: bool) -> None:
         self._mute.setText("🔇" if muted else "🔊")
 
+    def _on_slider_value(self, v: int) -> None:
+        t = v / 1000.0
+        e = self.session.engine
+        # 드래그 중이면 스크럽(연속), 아니면 휠·키보드 조작이므로 정식 시크
+        e.scrub_to(t) if self._slider.isSliderDown() else e.seek(t)
+
     def _on_pos(self, t: float) -> None:
         if not self._slider.isSliderDown():
             self._slider.blockSignals(True)
             self._slider.setValue(int(t * 1000))
             self._slider.blockSignals(False)
-            self._time.setText(f"{fmt_time(t)} / {fmt_time(self.session.engine.duration)}")
+        # 시간 표시는 드래그 중에도 갱신한다 — 스크럽 위치가 곧 현재 위치다
+        self._time.setText(f"{fmt_time(t)} / {fmt_time(self.session.engine.duration)}")
 
     def _on_rate(self, rate: float) -> None:
         self._rate.blockSignals(True)
