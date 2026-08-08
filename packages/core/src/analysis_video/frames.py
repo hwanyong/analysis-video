@@ -22,6 +22,9 @@ from . import media
 from .detect import adaptive, anchor
 from .errors import log
 
+# 프레임 번호를 실제 PTS로 옮기게 된 이후의 adaptive 캐시 (v1은 선언 fps 근사였다)
+ADAPTIVE_SCHEMA = "adaptive/2"
+
 
 def _gray_for_compare(img_path: Path, w: int = 400, h: int = 225) -> np.ndarray:
     return np.asarray(Image.open(img_path).convert("L").resize((w, h)))
@@ -57,19 +60,29 @@ def _cached_anchor(video_path: Path, out_dir: Path,
     return result
 
 
-def _cached_adaptive(video_path: Path, out_dir: Path, duration: float) -> list[dict]:
+def _cached_adaptive(video_path: Path, out_dir: Path, duration: float,
+                     frame_times) -> list[dict]:
     cache = out_dir / "detect_adaptive.json"
     if cache.exists():
-        log("[frames] AdaptiveDetector 캐시 재사용 (detect_adaptive.json)")
-        return json.loads(cache.read_text(encoding="utf-8"))
+        cached = json.loads(cache.read_text(encoding="utf-8"))
+        # v1은 선언 fps로 시각을 계산해 컨테이너 헤더가 틀리면 통째로 밀려 있었다.
+        # 버전이 없으면 그 산출물이므로 버리고 다시 검출한다 — 조용히 재사용하면
+        # 수정이 기존 분석에는 영원히 적용되지 않는다.
+        if isinstance(cached, dict) and cached.get("schema") == ADAPTIVE_SCHEMA:
+            log("[frames] AdaptiveDetector 캐시 재사용 (detect_adaptive.json)")
+            return cached["entries"]
+        log("[frames] AdaptiveDetector 캐시가 구버전 — 재검출합니다")
 
     log("[frames] AdaptiveDetector 실행 중...")
     entries = []
-    for t in adaptive.adaptive_detector_candidates(video_path):
+    # 프레임 번호 → 실제 PTS 변환에 anchor-diff가 이미 만든 time_series를 넘긴다.
+    # 선언 fps 근사를 쓰면 컨테이너 헤더가 틀렸을 때 시각이 통째로 밀린다.
+    for t in adaptive.adaptive_detector_candidates(video_path, frame_times=frame_times):
         # AdaptiveDetector는 자체 전환추적이 없어 사후 안정화가 필요
         stable = adaptive.pick_stable_time(video_path, t, duration)
         entries.append({"detected_at": t, "time": stable})
-    cache.write_text(json.dumps(entries), encoding="utf-8")
+    cache.write_text(json.dumps({"schema": ADAPTIVE_SCHEMA, "entries": entries}),
+                     encoding="utf-8")
     return entries
 
 
@@ -102,7 +115,8 @@ def build_frames(video_path: Path, out_dir: Path, points: list[dict], *,
         t = e.get("trigger_time", e["trigger_idx"] / fps)
         candidates.append(new_candidate(t, t, "anchor-diff"))
 
-    for entry in _cached_adaptive(video_path, out_dir, duration):
+    for entry in _cached_adaptive(video_path, out_dir, duration,
+                                  anchor_result["time_series"]):
         candidates.append(new_candidate(entry["time"], entry["detected_at"], "adaptive"))
 
     # importance-points 병합: 기존 후보와 가까우면 태그만 붙이고, 멀면 새로 캡처
