@@ -8,16 +8,15 @@ from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import QListWidget, QListWidgetItem, QVBoxLayout, QWidget
 
 from ..session import Session
-from . import fmt_time
+from . import ChildWindow, fmt_time
 
 DIM = QColor(140, 140, 140)
 
 
-class DialogueSyncWindow(QWidget):
+class DialogueSyncWindow(ChildWindow):
     def __init__(self, session: Session):
         super().__init__()
         self.session = session
-        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.resize(460, 720)
         self._idx: int | None = None
 
@@ -25,13 +24,15 @@ class DialogueSyncWindow(QWidget):
         self._list = QListWidget()
         self._list.setWordWrap(True)
         self._list.setFocusPolicy(Qt.FocusPolicy.NoFocus)  # 전역 단축키 우선
-        self._list.itemClicked.connect(
-            lambda item: session.engine.seek(item.data(Qt.ItemDataRole.UserRole)))
+        self._list.itemClicked.connect(self._on_item_clicked)
         layout.addWidget(self._list)
 
-        session.engine.positionChanged.connect(self._on_pos)
-        session.store.reloaded.connect(self._populate)
+        self.bind(session.engine.positionChanged, self._on_pos)
+        self.bind(session.store.reloaded, self._populate)
         self._populate()
+
+    def _on_item_clicked(self, item) -> None:
+        self.session.engine.seek(item.data(Qt.ItemDataRole.UserRole))
 
     def _populate(self) -> None:
         st = self.session.store

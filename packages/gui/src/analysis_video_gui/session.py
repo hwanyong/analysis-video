@@ -99,7 +99,9 @@ class Session(QObject):
 
     def restore_layout(self) -> None:
         saved = self.settings.value("open_windows")
-        for wid in (saved if isinstance(saved, list) and saved else DEFAULT_OPEN):
+        # 저장된 적 없음(None) → 기본 배치. 저장된 빈 목록 → 사용자 의도이므로 존중
+        wids = DEFAULT_OPEN if saved is None else (saved if isinstance(saved, list) else [saved])
+        for wid in wids:
             if wid in dict(REGISTRY):
                 self.open_window(wid)
 
@@ -110,10 +112,16 @@ class Session(QObject):
         self.showRejectedChanged.emit(self.show_rejected)
 
     def show_shortcut_help(self) -> None:
-        box = QMessageBox()
-        box.setWindowTitle("키보드 단축키")
-        box.setText(f"<pre>{SHORTCUT_HELP}</pre>")
-        box.exec()
+        if getattr(self, "_help_open", False):
+            return  # 중첩 모달 방지
+        self._help_open = True
+        try:
+            box = QMessageBox()
+            box.setWindowTitle("키보드 단축키")
+            box.setText(f"<pre>{SHORTCUT_HELP}</pre>")
+            box.exec()
+        finally:
+            self._help_open = False
 
     def shutdown(self) -> None:
         self.engine.shutdown()

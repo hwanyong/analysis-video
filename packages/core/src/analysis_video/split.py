@@ -58,7 +58,10 @@ def _copy_video(src: Path, dst: Path) -> None:
             if cc_in.extradata:
                 cc_out.extradata = cc_in.extradata
         for pkt in inp.demux(in_stream):
-            if pkt.dts is None:
+            # demux는 끝에 빈 flush 패킷을 낸다 — 그것만 거른다.
+            # dts만 보고 거르면 B-프레임 영상의 선두 패킷(dts=None)이 버려져
+            # 첫 키프레임이 사라지고, 디코더가 앞부분 전체를 폐기한다(무성 손실).
+            if pkt.size == 0:
                 continue
             pkt.stream = out_stream
             out.mux(pkt)

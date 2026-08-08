@@ -59,7 +59,14 @@ class _VideoDecodeThread(threading.Thread):
                 if local_gen != self.gen:
                     local_gen = self.gen
                     target = self.seek_target
-                    container.seek(max(int(target / stream.time_base), 0), stream=stream)
+                    try:
+                        container.seek(max(int(target / stream.time_base), 0), stream=stream)
+                    except av.FFmpegError:
+                        # seek 불가 스트림 — 처음부터 다시 열어 순차 진행
+                        container.close()
+                        container = av.open(str(self.path))
+                        stream = container.streams.video[0]
+                        stream.thread_type = "AUTO"
                     it = container.decode(stream)
                     skip_until = target
             if it is None:
@@ -115,17 +122,25 @@ class _AudioDecodeThread(threading.Thread):
         stream = container.streams.audio[0]
         resampler = av.AudioResampler(format="flt", layout="mono", rate=AUDIO_RATE)
         local_gen = -1
+        push_gen = -1   # 링이 발급한 push 세대 — 링 reset이 이보다 새로우면 push 폐기됨
         it = None
+        self.eof = False
 
         while not self.stop_flag:
             with self._lock:
                 if local_gen != self.gen:
                     local_gen = self.gen
                     target = self.seek_target
-                    container.seek(max(int(target / stream.time_base), 0), stream=stream)
+                    try:
+                        container.seek(max(int(target / stream.time_base), 0), stream=stream)
+                    except av.FFmpegError:
+                        container.close()
+                        container = av.open(str(self.path))
+                        stream = container.streams.audio[0]
                     it = container.decode(stream)
                     resampler = av.AudioResampler(format="flt", layout="mono", rate=AUDIO_RATE)
-                    self.ring.reset(target)
+                    push_gen = self.ring.reset(target)
+                    self.eof = False
             if it is None:
                 it = container.decode(stream)
             if self.ring.buffered_seconds() > 1.0:
@@ -134,6 +149,7 @@ class _AudioDecodeThread(threading.Thread):
             try:
                 frame = next(it)
             except (StopIteration, av.error.EOFError):
+                self.eof = True  # 진짜 스트림 종점 — 엔진이 벽시계로 폴백할 신호
                 _time.sleep(0.05)
                 continue
             except av.error.FFmpegError:
@@ -146,12 +162,16 @@ class _AudioDecodeThread(threading.Thread):
                     if cut >= len(pcm):
                         continue
                     pcm = pcm[cut:]
-                self.ring.push(local_gen, pcm)
+                self.ring.push(push_gen, pcm)
         container.close()
 
 
 class _AudioRing:
-    """디코더가 push, sounddevice 콜백이 pull. played 샘플 수가 곧 오디오 클록."""
+    """디코더가 push, sounddevice 콜백이 pull. played 샘플 수가 곧 오디오 클록.
+
+    세대 규약: reset()만이 세대를 발급한다. 디코드 스레드는 자신이 수행한
+    reset이 돌려준 세대로만 push하고, 그 사이 다른 주체(GUI의 _anchor_clock)가
+    reset했다면 세대가 앞서 있으므로 구 위치에서 디코드된 스테일 PCM은 버려진다."""
 
     def __init__(self):
         self.lock = threading.Lock()
@@ -159,21 +179,22 @@ class _AudioRing:
         self.offset = 0          # chunks[0] 안의 소비 위치
         self.played = 0          # 실제로 출력된 샘플 수 (클록의 원천)
         self.anchor_pts = 0.0    # played=0 시점의 미디어 시각
-        self.gen = 0             # 현재 유효 세대
+        self.gen = 0             # 현재 유효 세대 — reset이 발급
         self.active = False      # 오디오가 클록 마스터인가
 
-    def reset(self, anchor_pts: float) -> None:
+    def reset(self, anchor_pts: float) -> int:
         with self.lock:
             self.chunks.clear()
             self.offset = 0
             self.played = 0
             self.anchor_pts = anchor_pts
             self.gen += 1
+            return self.gen
 
     def push(self, gen: int, pcm: np.ndarray) -> None:
         with self.lock:
-            if gen != self.gen and self.gen != gen:  # reset 이후 구세대 데이터 폐기
-                pass
+            if gen != self.gen:
+                return  # reset 이후 구세대 데이터 — 폐기
             self.chunks.append(pcm)
 
     def buffered_seconds(self) -> float:
@@ -228,6 +249,7 @@ class PlayerEngine(QObject):
         self._wall_anchor = 0.0
         self._prime = False          # 정지 중 seek/스텝 후 1장만 표시
         self._prime_target = 0.0
+        self._prime_deadline = 0.0   # 충족 불가능한 prime의 영구 대기 방지
         self._pending: tuple | None = None  # 큐에서 꺼냈지만 아직 미래인 프레임 1장
 
         self._q: queue.Queue = queue.Queue(maxsize=4)
@@ -264,10 +286,27 @@ class PlayerEngine(QObject):
         return (self._audio_ok and self._playing
                 and self._rate == 1.0 and not self._muted)
 
+    @property
+    def muted(self) -> bool:
+        return self._muted
+
+    @property
+    def rate(self) -> float:
+        return self._rate
+
+    @property
+    def playing(self) -> bool:
+        return self._playing
+
     def position(self) -> float:
         if not self._playing:
             return self._pos
         if self._audio_master():
+            # 오디오 스트림 종점(EOF)에서 링이 마르면 벽시계로 이어간다 —
+            # 아니면 클록이 동결돼 '재생 중' 상태로 영구 정지한다 (리뷰 확정 결함)
+            if getattr(self._audio_thread, "eof", False) \
+                    and self._ring.buffered_seconds() <= 0.0:
+                return self._pos + (_time.perf_counter() - self._wall_anchor) * self._rate
             return self._ring.position()
         return self._pos + (_time.perf_counter() - self._wall_anchor) * self._rate
 
@@ -282,6 +321,7 @@ class PlayerEngine(QObject):
         if self.duration and self._pos >= self.duration - 0.05:
             self.seek(0.0)
         self._playing = True
+        self._prime = False  # 정지 중 걸린 prime이 재생 경로를 기아시키지 않게 해제
         self._anchor_clock(self._pos)
         self.stateChanged.emit(True)
 
@@ -300,11 +340,11 @@ class PlayerEngine(QObject):
         if self._audio_thread:
             self._audio_thread.request_seek(t)
         if self._playing:
+            self._prime = False
             self._anchor_clock(t)
         else:
             self._pos = t
-            self._prime = True
-            self._prime_target = t
+            self._arm_prime(t)
         self.positionChanged.emit(t)
 
     def seek_relative(self, dt: float) -> None:
@@ -313,8 +353,7 @@ class PlayerEngine(QObject):
     def step_frame(self, direction: int = 1) -> None:
         self.pause()
         if direction > 0:
-            self._prime = True
-            self._prime_target = self._pos + 0.4 / self.fps
+            self._arm_prime(self._pos + 0.4 / self.fps)
         else:
             self.seek(self._pos - 1.1 / self.fps)
 
@@ -334,17 +373,29 @@ class PlayerEngine(QObject):
 
     def shutdown(self) -> None:
         self._timer.stop()
-        self._video.stop_flag = True
-        if self._audio_thread:
-            self._audio_thread.stop_flag = True
         if self._stream is not None:
             try:
                 self._stream.stop()
                 self._stream.close()
             except Exception:
                 pass
+        self._video.stop_flag = True
+        if self._audio_thread:
+            self._audio_thread.stop_flag = True
+        self._drain_queue()  # put 대기 중인 디코드 스레드를 풀어준다
+        # 인터프리터 종료와 PyAV C 코드 실행이 겹치지 않게 정리를 기다린다
+        self._video.join(timeout=2.0)
+        if self._audio_thread:
+            self._audio_thread.join(timeout=2.0)
 
     # ---------- 내부 ----------
+
+    def _arm_prime(self, target: float) -> None:
+        """정지 중 1장만 표시하는 prime 요청. 영상 끝에서 목표 이상 프레임이
+        존재하지 않을 수 있으므로 마감 시각을 둬 영구 대기를 막는다."""
+        self._prime = True
+        self._prime_target = target
+        self._prime_deadline = _time.perf_counter() + 2.0
 
     def _anchor_clock(self, pos: float) -> None:
         self._pos = pos
@@ -366,13 +417,13 @@ class PlayerEngine(QObject):
                 return
 
     def _tick(self) -> None:
-        if self._prime:
+        if self._prime and not self._playing:
             # 정지 중 seek/스텝: 목표 이전 프레임은 버리고 첫 프레임 1장 표시
             while True:
                 try:
                     gen, pts, img = self._q.get_nowait()
                 except queue.Empty:
-                    return
+                    break
                 if gen != self._video.gen:
                     continue
                 if pts < self._prime_target - 0.6 / self.fps:
@@ -382,6 +433,9 @@ class PlayerEngine(QObject):
                 self.frameReady.emit(img, pts)
                 self.positionChanged.emit(pts)
                 return
+            if _time.perf_counter() > self._prime_deadline:
+                self._prime = False  # 영상 끝 등 — 목표 이상 프레임이 없음
+            return
 
         if not self._playing:
             return

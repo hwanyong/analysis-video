@@ -47,7 +47,13 @@ def _frame_at(container: av.container.InputContainer, time_s: float) -> av.Video
     stream = container.streams.video[0]
     stream.thread_type = "AUTO"
     offset = max(int(time_s / stream.time_base), 0)
-    container.seek(offset, stream=stream)
+    try:
+        container.seek(offset, stream=stream)
+    except av.FFmpegError:
+        # 인덱스(Cues)가 없는 컨테이너 등 seek 불가 스트림 — 컨테이너를 막 연
+        # 직후이므로 처음부터 순차 디코드해 목표 시각까지 진행한다.
+        # (실패를 전파하면 파이프라인 전체가 내부 오류로 죽는다)
+        pass
     last = None
     for frame in container.decode(stream):
         if frame.time is None:

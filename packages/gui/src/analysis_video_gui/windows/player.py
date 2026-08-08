@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (QComboBox, QHBoxLayout, QLabel, QPushButton, QSli
 
 from ..playback import RATES
 from ..session import Session
-from . import fmt_time
+from . import ChildWindow, fmt_time
 
 
 class VideoWidget(QWidget):
@@ -31,12 +31,11 @@ class VideoWidget(QWidget):
         p.end()
 
 
-class PlayerWindow(QWidget):
+class PlayerWindow(ChildWindow):
     def __init__(self, session: Session):
         super().__init__()
         self.session = session
         e = session.engine
-        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.resize(960, 620)
 
         layout = QVBoxLayout(self)
@@ -73,7 +72,7 @@ class PlayerWindow(QWidget):
         self._mute = QPushButton("🔊")
         self._mute.setFixedWidth(40)
         self._mute.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._mute.clicked.connect(lambda: e.set_muted(not e._muted))
+        self._mute.clicked.connect(lambda: e.set_muted(not e.muted))
         bar.addWidget(self._mute)
 
         self._time = QLabel("00:00.00 / 00:00.00")
@@ -90,11 +89,20 @@ class PlayerWindow(QWidget):
                 f"{fmt_time(v / 1000.0)} / {fmt_time(e.duration)}"))
         layout.addWidget(self._slider)
 
-        e.frameReady.connect(lambda img, pts: self.video.set_image(img))
-        e.positionChanged.connect(self._on_pos)
-        e.stateChanged.connect(lambda playing: self._play_btn.setText("⏸" if playing else "▶"))
-        e.mutedChanged.connect(lambda m: self._mute.setText("🔇" if m else "🔊"))
-        e.rateChanged.connect(self._on_rate)
+        self.bind(e.frameReady, self._on_frame)
+        self.bind(e.positionChanged, self._on_pos)
+        self.bind(e.stateChanged, self._on_state)
+        self.bind(e.mutedChanged, self._on_muted)
+        self.bind(e.rateChanged, self._on_rate)
+
+    def _on_frame(self, img: QImage, pts: float) -> None:
+        self.video.set_image(img)
+
+    def _on_state(self, playing: bool) -> None:
+        self._play_btn.setText("⏸" if playing else "▶")
+
+    def _on_muted(self, muted: bool) -> None:
+        self._mute.setText("🔇" if muted else "🔊")
 
     def _on_pos(self, t: float) -> None:
         if not self._slider.isSliderDown():

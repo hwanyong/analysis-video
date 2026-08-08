@@ -12,14 +12,13 @@ from analysis_video.manifest import write_json_atomic
 
 from ..flags import compare_metrics
 from ..session import Session
-from . import fmt_time
+from . import ChildWindow, fmt_time
 
 
-class CompareWindow(QWidget):
+class CompareWindow(ChildWindow):
     def __init__(self, session: Session):
         super().__init__()
         self.session = session
-        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.resize(560, 560)
 
         layout = QVBoxLayout(self)
@@ -27,14 +26,18 @@ class CompareWindow(QWidget):
         top = QHBoxLayout()
         top.addWidget(QLabel("허용오차(초):"))
         self._tol = QDoubleSpinBox()
+        # 창을 여는 것만으로 포커스를 가져가지 않게 — 그러면 전역 단축키가 죽는다.
+        # 클릭(또는 Tab)했을 때만 편집 포커스를 받고, Esc로 되돌린다.
+        self._tol.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         self._tol.setRange(0.5, 10.0)
         self._tol.setSingleStep(0.5)
         self._tol.setValue(2.0)
+        self._tol.setToolTip("GT 플래그와 검출 프레임을 같은 것으로 볼 시간 오차 (Esc: 편집 종료)")
         self._tol.valueChanged.connect(self._recompute)
         top.addWidget(self._tol)
         top.addStretch()
         add_btn = QPushButton("현재 시각에 플래그 (F)")
-        add_btn.clicked.connect(lambda: session.flags.add(session.engine.position()))
+        add_btn.clicked.connect(self._add_flag_here)
         del_btn = QPushButton("선택 삭제")
         del_btn.clicked.connect(self._delete_selected)
         export_btn = QPushButton("compare.json 내보내기")
@@ -52,17 +55,25 @@ class CompareWindow(QWidget):
         self._table.setHorizontalHeaderLabels(["GT 플래그", "매칭 검출", "Δ(초)", "판정"])
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self._table.cellClicked.connect(
-            lambda row, _col: self.session.engine.seek(self.session.flags.flags[row]["time"]))
+        self._table.cellClicked.connect(self._on_cell_clicked)
         layout.addWidget(self._table)
 
         self._fp_label = QLabel()
         self._fp_label.setWordWrap(True)
         layout.addWidget(self._fp_label)
 
-        session.flags.changed.connect(self._recompute)
-        session.store.reloaded.connect(self._recompute)
+        self.bind(session.flags.changed, self._recompute)
+        self.bind(session.store.reloaded, self._recompute)
         self._recompute()
+
+    def _add_flag_here(self) -> None:
+        self.session.flags.add(self.session.engine.position())
+
+    def _on_cell_clicked(self, row: int, _col: int) -> None:
+        # 테이블은 항상 flags 배열 순서(시간 오름차순)로 채워지므로 인덱스가 일치한다
+        flags = self.session.flags.flags
+        if 0 <= row < len(flags):
+            self.session.engine.seek(flags[row]["time"])
 
     def _metrics(self) -> dict:
         detected = [f["time"] for f in self.session.store.frames]

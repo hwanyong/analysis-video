@@ -37,15 +37,25 @@ class Store(QObject):
         self._debounce.timeout.connect(self.reload)
 
         self._watcher = QFileSystemWatcher(self)
-        self._watcher.addPath(str(out_dir))
-        for name in ("metadata.json", "transcript.json"):
-            p = out_dir / name
-            if p.exists():
-                self._watcher.addPath(str(p))
-        self._watcher.directoryChanged.connect(lambda _: self._debounce.start())
-        self._watcher.fileChanged.connect(lambda _: self._debounce.start())
+        self._watcher.directoryChanged.connect(self._on_fs_event)
+        self._watcher.fileChanged.connect(self._on_fs_event)
+        self._rearm_watcher()
 
         self.reload()
+
+    def _on_fs_event(self, _path: str) -> None:
+        self._rearm_watcher()
+        self._debounce.start()
+
+    def _rearm_watcher(self) -> None:
+        """감시 경로를 매번 다시 건다 — out_dir가 아직 없을 수도 있고(첫 분석 전),
+        frames 재실행이 디렉토리를 지웠다 다시 만들면 기존 감시가 끊기기 때문."""
+        watched = set(self._watcher.directories()) | set(self._watcher.files())
+        targets = [self.out_dir.parent, self.out_dir,
+                   self.out_dir / "metadata.json", self.out_dir / "transcript.json"]
+        for p in targets:
+            if p.exists() and str(p) not in watched:
+                self._watcher.addPath(str(p))
 
     # ---------- 로드 ----------
 

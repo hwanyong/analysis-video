@@ -11,17 +11,17 @@ from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QLabel, QScrollArea, QVBoxLayout, QWidget
 
 from ..session import Session
-from . import fmt_time
+from . import ChildWindow, fmt_time
 
 
-class FrameSyncWindow(QWidget):
+class FrameSyncWindow(ChildWindow):
     def __init__(self, session: Session):
         super().__init__()
         self.session = session
-        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.resize(560, 640)
         self._idx: int | None = -1  # -1 = 미초기화 (None과 구분)
         self._pixmaps: dict[str, QPixmap] = {}
+        self._current_pm: QPixmap | None = None
 
         layout = QVBoxLayout(self)
         self._image = QLabel("--")
@@ -40,10 +40,13 @@ class FrameSyncWindow(QWidget):
         scroll.setFixedHeight(240)
         layout.addWidget(scroll)
 
-        session.engine.positionChanged.connect(self._on_pos)
-        session.store.reloaded.connect(self._refresh)
-        session.showRejectedChanged.connect(lambda _: self._refresh())
+        self.bind(session.engine.positionChanged, self._on_pos)
+        self.bind(session.store.reloaded, self._refresh)
+        self.bind(session.showRejectedChanged, self._on_show_rejected)
         self._on_pos(session.engine.position())
+
+    def _on_show_rejected(self, _show: bool) -> None:
+        self._refresh()
 
     # ---------- 갱신 ----------
 
@@ -71,10 +74,10 @@ class FrameSyncWindow(QWidget):
     def _render(self) -> None:
         st = self.session.store
         if self._idx is None or not st.frames:
-            self._image.setText("이 구간에 채택된 프레임 없음\n(첫 프레임 이전이거나 metadata 없음)")
-            self._image.setPixmap(QPixmap())
-            self._meta.setText("")
             self._current_pm = None
+            self._image.clear()  # setText 뒤 setPixmap()은 문구를 지운다 — 순서 주의
+            self._image.setText("이 구간에 채택된 프레임 없음\n(첫 프레임 이전이거나 metadata 없음)")
+            self._meta.setText("")
             return
         f = st.frames[self._idx]
         pm = self._pixmap(f["image"])
@@ -105,10 +108,10 @@ class FrameSyncWindow(QWidget):
         self._meta.setText("<br>".join(parts))
 
     def _apply_scaled(self) -> None:
-        pm = getattr(self, "_current_pm", None)
+        pm = self._current_pm
         if pm is None:
+            self._image.clear()
             self._image.setText("이미지 파일 없음")
-            self._image.setPixmap(QPixmap())
             return
         self._image.setPixmap(pm.scaled(
             self._image.size(), Qt.AspectRatioMode.KeepAspectRatio,

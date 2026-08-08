@@ -25,11 +25,16 @@ class FlagStore(QObject):
                 self.flags = []
 
     def _save(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)  # 미분석 세션에서도 기입 가능
         write_json_atomic(self.path, {"flags": self.flags})
         self.changed.emit()
 
-    def add(self, time: float, note: str = "") -> None:
-        self.flags.append({"time": round(time, 2), "note": note})
+    def add(self, time: float, note: str = "", dedupe_within: float = 0.25) -> None:
+        t = round(time, 2)
+        # F 연타(특히 일시정지 중)로 사실상 같은 시각이 중복 기입되는 것을 막는다
+        if any(abs(f["time"] - t) <= dedupe_within for f in self.flags):
+            return
+        self.flags.append({"time": t, "note": note})
         self.flags.sort(key=lambda f: f["time"])
         self._save()
 
@@ -54,7 +59,6 @@ def compare_metrics(flag_times: list[float], detected_times: list[float],
         else:
             unmatched_flags.append(ft)
 
-    matched_det = {m["detected"] for m in matched_flags}
     false_positives = [d for d in detected_times
                        if not any(abs(d - ft) <= tolerance for ft in flag_times)]
 

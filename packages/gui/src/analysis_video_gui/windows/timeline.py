@@ -11,16 +11,16 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from ..session import Session
+from . import ChildWindow
 
 LANE_TICKS = [(5.45, "프레임"), (4.5, "탈락"), (3.9, "points"),
               (3.3, "STT"), (2.4, "플래그"), (1.0, "변화량")]
 
 
-class TimelineWindow(QWidget):
+class TimelineWindow(ChildWindow):
     def __init__(self, session: Session):
         super().__init__()
         self.session = session
-        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.resize(1400, 360)
 
         layout = QVBoxLayout(self)
@@ -35,7 +35,7 @@ class TimelineWindow(QWidget):
         self._playhead = pg.InfiniteLine(pos=0, angle=90, movable=True,
                                          pen=pg.mkPen("#ff5555", width=2))
         self._dragging = False
-        self._playhead.sigDragged.connect(lambda _: setattr(self, "_dragging", True))
+        self._playhead.sigDragged.connect(self._on_playhead_drag)
         self._playhead.sigPositionChangeFinished.connect(self._on_playhead_drop)
 
         self._flags_item = pg.ScatterPlotItem(symbol="t", size=13, brush="#ff8c00", pen=None)
@@ -44,11 +44,17 @@ class TimelineWindow(QWidget):
                                                  tip=lambda x, y, data: data)
 
         self._build()
-        session.store.reloaded.connect(self._build)
-        session.flags.changed.connect(self._update_flags)
-        session.showRejectedChanged.connect(self._rejected_item.setVisible)
-        session.engine.positionChanged.connect(self._on_pos)
+        self.bind(session.store.reloaded, self._build)
+        self.bind(session.flags.changed, self._update_flags)
+        self.bind(session.showRejectedChanged, self._on_show_rejected)
+        self.bind(session.engine.positionChanged, self._on_pos)
         self._pw.scene().sigMouseClicked.connect(self._on_click)
+
+    def _on_show_rejected(self, show: bool) -> None:
+        self._rejected_item.setVisible(show)
+
+    def _on_playhead_drag(self, _line) -> None:
+        self._dragging = True
 
     # ---------- 구성 ----------
 

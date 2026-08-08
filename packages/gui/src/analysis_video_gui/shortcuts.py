@@ -30,8 +30,25 @@ class ShortcutRouter(QObject):
     def eventFilter(self, obj, ev):
         if ev.type() != QEvent.Type.KeyPress:
             return False
+        app = QApplication.instance()
+        # 모달 대화상자(도움말 등)·팝업(콤보박스 드롭다운)이 떠 있으면 그쪽이 우선
+        if app.activeModalWidget() is not None or app.activePopupWidget() is not None:
+            return False
+        # 입력 위젯 양보는 "그 입력 창을 보고 있을 때"로 한정한다. 앱 전역
+        # focusWidget은 비활성 창의 것일 수도 있어(비교 창의 허용오차 스핀박스 등),
+        # 그대로 믿으면 다른 창을 보는 동안 전 단축키가 죽는다.
         fw = QApplication.focusWidget()
         if isinstance(fw, _EDIT_WIDGETS):
+            active = QApplication.activeWindow()
+            if active is None or fw.window() is active:
+                if ev.key() == Qt.Key.Key_Escape:
+                    fw.clearFocus()  # 편집 종료 → 단축키 복귀
+                    return True
+                return False
+        # Ctrl/⌘/Alt 조합은 앱·OS 단축키(복사, 창 전환 등)의 것 — 가로채지 않는다
+        blocking = (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier
+                    | Qt.KeyboardModifier.MetaModifier)
+        if ev.modifiers() & blocking:
             return False
         return self._dispatch(ev)
 
@@ -41,6 +58,11 @@ class ShortcutRouter(QObject):
         key = ev.key()
         shift = bool(ev.modifiers() & Qt.KeyboardModifier.ShiftModifier)
         repeat = ev.isAutoRepeat()
+
+        # Shift+구두점은 OS가 시프트 문자로 전달한다(, → <, . → >)
+        if key in (Qt.Key.Key_Less, Qt.Key.Key_Greater):
+            self._rate_step(-1 if key == Qt.Key.Key_Less else +1)
+            return True
 
         if key in (Qt.Key.Key_Space, Qt.Key.Key_K):
             if not repeat:
@@ -66,7 +88,7 @@ class ShortcutRouter(QObject):
             return True
         if key == Qt.Key.Key_M:
             if not repeat:
-                e.set_muted(not e._muted)
+                e.set_muted(not e.muted)
             return True
         if key == Qt.Key.Key_Home:
             e.seek(0.0)
@@ -96,11 +118,12 @@ class ShortcutRouter(QObject):
                 s.flags.add(e.position())
             return True
         if key == Qt.Key.Key_Question:
-            s.show_shortcut_help()
+            if not repeat:
+                s.show_shortcut_help()
             return True
         return False
 
     def _rate_step(self, direction: int) -> None:
         e = self.session.engine
-        i = min(range(len(RATES)), key=lambda i: abs(RATES[i] - e._rate))
+        i = min(range(len(RATES)), key=lambda i: abs(RATES[i] - e.rate))
         e.set_rate(RATES[max(0, min(len(RATES) - 1, i + direction))])
