@@ -18,7 +18,7 @@ SHORTCUT_HELP = """\
 Space / K      재생 · 일시정지          ↓ / ↑      다음/이전 마크 (켜 둔 종류 전부)
 ← / →          5초 뒤로/앞으로          N / ⇧N     다음/이전 채택 프레임
 J / L          10초 뒤로/앞으로         G / ⇧G     다음/이전 GT 플래그
-, / .          프레임 단위 스텝          D          이 탈락이 '무엇의 중복'인지 원본으로
+, / .          프레임 단위 스텝
 ⇧, / ⇧.        배속 내림/올림           R          탈락 후보 숨김/표시
 0~9            0~90% 지점으로 점프      F          GT 플래그 추가/제거(토글)
 Home/End       처음/끝                  ?          이 도움말
@@ -134,14 +134,6 @@ class ShortcutRouter(QObject):
             return True
         if key == Qt.Key.Key_G:
             s.jump_mark(forward=not shift, kinds=["flag"])
-            return True
-        if key == Qt.Key.Key_D:
-            # 탈락 후보가 '무엇의 중복'으로 판정됐는지 그 원본으로 건너뛴다 —
-            # 중복 판정이 옳았는지 확인할 유일한 수단
-            target = s.store.dup_target(e.position())
-            if target is not None:
-                e.seek(target)
-                s.markJumped.emit("frame", f"중복 판정의 원본 프레임 t={target:.2f}")
             return True
         if key == Qt.Key.Key_R:
             if not repeat:

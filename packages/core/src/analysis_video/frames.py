@@ -133,9 +133,8 @@ def build_frames(video_path: Path, out_dir: Path, *,
                  cache_dir: Path | None = None,
                  window: tuple[float, float] | None = None,
                  anchor_threshold: float = 0.02, rate_threshold: float = 0.0015,
-                 cut_area_threshold: float = 0.04,
+                 cut_area_threshold: float = 0.02,
                  blank_area_threshold: float = 0.001,
-                 dup_area_threshold: float = 0.002,
                  pair_dup_threshold: float = 0.93) -> dict:
     """out_dir = 이 분석 단위의 디렉터리, cache_dir = 검출 캐시를 둘 곳.
 
@@ -211,19 +210,19 @@ def build_frames(video_path: Path, out_dir: Path, *,
     accepted: list[dict] = []
 
     def gate(c: dict, img: Path) -> None:
-        """추출→내용량→중복 게이트. 판정을 c에 기록하고 records/accepted를 갱신한다.
+        """추출→내용량 게이트. 판정을 c에 기록하고 records/accepted를 갱신한다.
 
-        두 판정 모두 **오버레이 띠를 뺀 본문**에서만 한다. 자막 띠를 함께 재면
-        본문이 달라도 자막 변화에 묻히고(오병합), 본문이 같아도 자막 때문에
-        달라 보인다.
+        후보를 **버리는 판정은 "그림이 비었나" 하나뿐**이다. 중복 게이트는 없앴다:
+        같은 화면이 두 번 나와도 지울 이유가 없고, 무엇보다 그 게이트는 먼저 온
+        것을 남기고 **나중 것을 버려서** 판서가 더 진행된 최신 상태를 잃었다.
+        내용량 판정은 오버레이 띠를 뺀 본문에서 한다.
         """
         c["image"] = img.relative_to(out_dir).as_posix()
         if not media.extract_frame(video_path, c["time"], img):
             c.update(status="rejected", reject_reason="extract-failed", image=None)
             records.append(c)
             return
-        body = overlay.crop(_gray_for_compare(img), band)
-        area = overlay.content_area(body)
+        area = overlay.content_area(overlay.crop(_gray_for_compare(img), band))
         c["yavg"] = round(media.yavg(img), 2)
         c["content_area"] = round(area, 4)
         if area <= blank_area_threshold:
@@ -233,37 +232,6 @@ def build_frames(video_path: Path, out_dir: Path, *,
                      image=dst.relative_to(out_dir).as_posix())
             records.append(c)
             return
-        # 중복 판정은 **본문에서 바뀐 픽셀의 면적** 하나로 한다.
-        #
-        # 전역 SSIM으로 확증하던 이전 방식은 배경이 같으면 통과했다 — 실측 video3에서
-        # 서로 다른 판서 페이지가 SSIM 0.973으로 병합됐다(본문 면적으로는 0.44% 대
-        # 0.00%로 갈린다). pHash 사전 필터도 뺐다. 저주파 구조만 보는 근사라 거의
-        # 같은 슬라이드끼리도 거리가 4를 넘겨(실측 video2에서 본문 차이 0.03~0.11%인
-        # 8쌍이 그 때문에 안 묶였다) 정작 정당한 병합을 막고 있었다.
-        #
-        # 뺄 수 있는 이유는 비용이 사라졌기 때문이다. 예전 측정에서 쌍당 비용의
-        # 정체는 이미지 **로딩**(13.78ms)이었고 배열끼리의 비교는 5.71µs였다.
-        # 지금은 채택 프레임의 본문 배열을 메모리에 들고 있으므로 로딩이 없다.
-        dup = next(
-            (a for a in accepted
-             if float((np.abs(body - a["_body"]) > overlay.CHANGE_DELTA).mean())
-             <= dup_area_threshold),
-            None)
-        if dup is not None:
-            dst = rejected_dir / img.name
-            img.rename(dst)
-            # 중복 탈락이라도 출처는 생존 레코드로 승계 — provenance 소실 금지
-            for s in c["sources"]:
-                if s not in dup["sources"]:
-                    dup["sources"].append(s)
-            # dup_of는 사유 문자열과 별개의 기계 판독용 필드다. 소비자가 "of=…"를
-            # 정규식으로 되파싱하게 두면 표현이 바뀔 때마다 조용히 끊긴다.
-            c.update(status="rejected", reject_reason=f"dup(of={dup['time']:.2f})",
-                     dup_of=round(dup["time"], 2),
-                     image=dst.relative_to(out_dir).as_posix())
-            records.append(c)
-            return
-        c["_body"] = body
         c["status"] = "accepted"
         accepted.append(c)
         records.append(c)
@@ -273,8 +241,6 @@ def build_frames(video_path: Path, out_dir: Path, *,
         gate(c, frames_dir / f"scene_{seq:03d}_t{c['time']:07.2f}.jpg")
 
     records.sort(key=lambda r: r["time"])
-    for r in accepted:
-        r.pop("_body", None)  # 비교용 배열은 산출물에 나가지 않는다
 
     log(f"[frames] 완료: 채택 {len(accepted)}건 / 탈락 {len(records) - len(accepted)}건")
     events = [e for e in anchor_result["events"]
@@ -287,7 +253,6 @@ def build_frames(video_path: Path, out_dir: Path, *,
             "anchor_threshold": anchor_threshold, "rate_threshold": rate_threshold,
             "cut_area_threshold": cut_area_threshold,
             "blank_area_threshold": blank_area_threshold,
-            "dup_area_threshold": dup_area_threshold,
             "pair_dup_threshold": pair_dup_threshold,
             "body_band": [round(band[0], 3), round(band[1], 3)],
         },

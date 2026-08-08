@@ -28,7 +28,6 @@ def render(metadata: dict, video_name: str) -> str:
     frames = sorted(metadata["frames"], key=lambda f: f["time"])
     rejected = metadata.get("rejected", [])
     segments = metadata.get("transcript", {}).get("segments", [])
-    by_time = {round(f["time"], 2): f["image"] for f in frames}
 
     periods = [tuple(p) for p in metadata.get("screens", [])]
     if not periods:  # screens가 없는 구산출물 — 프레임의 구간에서 되짚는다
@@ -50,18 +49,6 @@ def render(metadata: dict, video_name: str) -> str:
         k = screen_of(f)
         if k is not None:
             images.setdefault(k, []).append(f["image"])
-    # 후보가 전부 탈락한 화면: 앞선 동일 화면에 병합된 것이면 그 이미지가
-    # 이 화면의 모습이기도 하다 — 되찾아 붙인다(같은 파일을 다시 참조할 뿐이다).
-    borrowed: set[int] = set()
-    for r in rejected:
-        k = screen_of(r)
-        if k is None or k in images or r.get("dup_of") is None:
-            continue
-        img = by_time.get(round(r["dup_of"], 2))
-        if img:
-            images.setdefault(k, []).append(img)
-            borrowed.add(k)
-
     # 대사 배정은 align과 **같은 함수**로 한다 — 이미지가 하나도 없는 화면에는
     # 붙을 프레임이 없어 frames[].dialogue로는 닿지 못하기 때문이다.
     scoped = align.segments_in(segments, periods[0][0], periods[-1][1]) if periods else []
@@ -82,7 +69,7 @@ def render(metadata: dict, video_name: str) -> str:
                 host_of[k] = owner
 
     lines = [f"# {video_name}", ""]
-    n_img = sum(len(v) for k, v in images.items() if k not in borrowed)
+    n_img = sum(len(v) for v in images.values())
     lines.append(f"화면 {len(periods)}개 · 이미지 {n_img}장 · {duration:.0f}초")
     lines += ["", "각 항목은 한 화면(또는 한 문장이 말해지는 동안 지나간 화면들)이다"
                   " — 구간, 그때 촬영된 이미지(등장 직후→사라지기 직전 순), 그동안의 대사.", ""]
@@ -99,10 +86,8 @@ def render(metadata: dict, video_name: str) -> str:
             continue  # 이미지도 대사도 없는 화면은 실을 것이 없다
         lines.append(f"## {round(start, 2)}-{round(end, 2)}s")
         lines += [f"![]({p})" for p in pics]
-        if k in borrowed:
-            lines.append("(앞 화면과 같은 그림 — 위 이미지가 이 구간의 모습이다)")
-        elif not pics:
-            lines.append("(그림 없음 — 화면이 너무 어두워 추출하지 못했다)")
+        if not pics:
+            lines.append("(그림 없음 — 화면이 비어 있어 추출하지 못했다)")
         lines.append(text or "(무음)")
         lines.append("")
     return "\n".join(lines)

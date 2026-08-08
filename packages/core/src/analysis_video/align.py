@@ -72,10 +72,8 @@ def attach_dialogue(records: list[dict], segments: list[dict], duration: float,
     """모든 레코드에 소속 화면을 매긴다 — 탈락한 것도 포함.
 
     탈락 레코드에도 화면을 매기는 이유: 어떤 화면은 후보가 **전부** 탈락한다
-    (어두움, 또는 앞선 동일 화면과의 중복 병합). 그 화면을 기록에서 지우면
-    그동안의 대사가 통째로 사라진다 — 실측 유실 video1 64%, video2 33%,
-    video3 14%. 중복 병합이면 그 화면을 대표하는 이미지가 dup_of에 살아 있으므로
-    소비자가 되찾을 수 있어야 한다."""
+    (그림이 비어서). 그 화면을 기록에서 지우면 그동안의 대사가 통째로 사라진다
+    — 실측 유실 video1 64%, video2 33%, video3 14%."""
     periods = screen_periods(anchor_events or [], duration, window)
     starts = [p[0] for p in periods]
     # 구간 밖의 대사는 이 분석의 것이 아니다 — 배정 대상에서 제외한다

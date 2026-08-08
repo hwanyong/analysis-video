@@ -124,12 +124,7 @@ class Session(QObject):
     def _describe_mark(self, kind: str, t: float) -> str:
         times = self.mark_times(kind)
         idx = times.index(t) + 1 if t in times else 0
-        desc = f"{MARK_LABEL.get(kind, kind)} {idx}/{len(times)} · t={t:.2f}"
-        if kind == "rejected":
-            dup = self.store.dup_target(t)
-            if dup is not None:
-                desc += f" · {dup:.2f}의 중복 판정 (D로 원본 보기)"
-        return desc
+        return f"{MARK_LABEL.get(kind, kind)} {idx}/{len(times)} · t={t:.2f}"
 
     # ---------- 창 관리 ----------
 

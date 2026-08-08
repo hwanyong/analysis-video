@@ -82,17 +82,15 @@ def test_same_screen_frames_share_one_dialogue_block():
 
 def test_context_keeps_screens_whose_images_all_dropped():
     """후보가 전부 탈락한 화면도 남아야 한다 — 지우면 그동안의 대사가 통째로
-    사라진다(실측 유실 video1 64%). 중복 병합이었다면 그 화면을 대표하는
-    이미지가 dup_of에 살아 있으므로 되찾아 붙인다."""
+    사라진다(실측 유실 video1 64%)."""
     metadata = {
         "source": {"duration": 50.0},
         "screens": [[0.0, 10.0], [10.1, 30.0], [30.1, 50.0]],
         "frames": [{"time": 0.5, "image": "frames/a.jpg", "screen": 0,
                     "interval": [0.0, 10.0], "dialogue": [_seg(1.0, 5.0, "첫 화면")]}],
         "rejected": [
-            {"time": 11.0, "screen": 1, "reject_reason": "phash-dup(of=0.5)",
-             "dup_of": 0.5},
-            {"time": 31.0, "screen": 2, "reject_reason": "yavg-dark(<5.0)"},
+            {"time": 11.0, "screen": 1, "reject_reason": "blank(<=0.001)"},
+            {"time": 31.0, "screen": 2, "reject_reason": "blank(<=0.001)"},
         ],
         "transcript": {"segments": [_seg(1.0, 5.0, "첫 화면"),
                                     _seg(12.0, 20.0, "둘째 화면 설명"),
@@ -101,9 +99,9 @@ def test_context_keeps_screens_whose_images_all_dropped():
     doc = context.render(metadata, "v.mkv")
     assert doc.count("## ") == 3, "이미지 없는 화면도 자리를 지킨다"
     assert "둘째 화면 설명" in doc and "셋째 화면 설명" in doc, "대사가 사라지면 안 된다"
-    # 중복 병합 화면은 원본 이미지를 되찾아 붙인다
-    assert doc.count("![](frames/a.jpg)") == 2
-    assert "앞 화면과 같은 그림" in doc
+    # 이미지는 자기 화면에만 붙는다 — 남의 그림을 빌려 오지 않는다
+    assert doc.count("![](frames/a.jpg)") == 1
+    assert doc.count("(그림 없음") == 2
     # 어두워서 못 뽑은 화면은 그림 없이 대사만
     assert "그림 없음" in doc
 
@@ -134,7 +132,7 @@ def test_context_groups_images_by_screen():
     assert "(무음)" in doc, "대사 없는 화면도 자리를 지킨다"
     assert "frames/b.jpg" in doc
     # 진단 데이터는 들어가지 않는다
-    for noise in ("yavg", "hash", "reject", "phash", "anchor_threshold"):
+    for noise in ("yavg", "content_area", "reject", "blank", "anchor_threshold"):
         assert noise not in doc, f"AI용 파일에 {noise}가 새어 들어갔다"
 
 
@@ -155,7 +153,7 @@ def test_context_is_far_smaller_than_metadata():
                     "interval": [float(i), i + 1.0], "dialogue": [segs[i]],
                     "yavg": 123.45, "hash": "0" * 16, "sources": ["anchor-diff"]}
                    for i in range(200)],
-        "rejected": [{"time": float(i), "reject_reason": "phash-dup(of=1.0)"}
+        "rejected": [{"time": float(i), "reject_reason": "blank(<=0.001)"}
                      for i in range(200)],
         "transcript": {"backend": "mlx", "model": "tiny", "text": " ".join(
             s["text"] for s in segs), "segments": segs},

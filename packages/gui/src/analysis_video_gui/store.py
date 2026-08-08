@@ -202,11 +202,3 @@ class Store(QObject):
             "transition": sorted(a for a, _ in self.transitions),
             "segment": self._seg_starts,
         }.get(kind, [])
-
-    def dup_target(self, time: float, within: float = 0.3) -> float | None:
-        """time 근처 탈락 후보가 '무엇의 중복'으로 판정됐는지 — 그 원본의 시각."""
-        near = [r for r in self.rejected if abs(r["time"] - time) <= within
-                and r.get("dup_of") is not None]
-        if not near:
-            return None
-        return min(near, key=lambda r: abs(r["time"] - time))["dup_of"]

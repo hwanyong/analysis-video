@@ -98,8 +98,6 @@ def build_metadata(video_path: Path, transcript: dict, build: dict,
                        "screen": r.get("screen"),
                        "reject_reason": r["reject_reason"], "image": r.get("image")}
         # 중복 판정이 옳았는지 확인하려면 병합 대상으로 건너뛸 수 있어야 한다
-        if r.get("dup_of") is not None:
-            entry["dup_of"] = r["dup_of"]
         rejected_out.append(entry)
 
     return {

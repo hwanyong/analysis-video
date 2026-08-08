@@ -31,10 +31,10 @@ def _blank():
 CUT_VALUE = 40.0
 
 
-def _patch(base, rows, value=CUT_VALUE):
-    """base의 위쪽 rows줄을 value로 칠한 새 프레임."""
+def _patch(base, rows, value=CUT_VALUE, cols=None):
+    """base의 위쪽 rows줄(가로 cols칸)을 value로 칠한 새 프레임."""
     f = base.copy()
-    f[:rows, :] = value
+    f[:rows, :cols if cols is not None else base.shape[1]] = value
     return f
 
 
@@ -94,10 +94,12 @@ def test_transition_start_latches_until_stable(stub, tmp_path):
 def test_gradual_accumulation_still_triggers_via_anchor_diff(stub, tmp_path):
     """면적으로는 절대 안 잡히는 점진 변화도 anchor_diff가 잡아야 한다.
 
-    매 프레임 한 줄씩 칠하면 프레임당 면적은 1/36(2.8%)이라 컷 임계 미달인데,
-    앵커와의 거리는 계속 벌어진다."""
+    매 프레임 반 줄씩 칠하면 프레임당 면적은 (1/36)×(1/2)=1.4%라 컷 임계
+    0.02 미달인데, 앵커와의 거리는 계속 벌어진다."""
     a = _blank()
-    seq = [a] + [_patch(a, n) for n in range(1, 8)] + [_patch(a, 7)] * 3
+    half = 32  # 64칸 중 절반 → 한 줄을 다 칠하면 2.8%로 임계를 넘어버린다
+    seq = [a] + [_patch(a, n, cols=half) for n in range(1, 12)] \
+        + [_patch(a, 11, cols=half)] * 3
     stub(seq)
 
     r = anchor.transition_aware_anchor_diff(tmp_path / "v.mkv")

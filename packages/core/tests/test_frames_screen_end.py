@@ -52,11 +52,9 @@ def stub_pipeline(monkeypatch, tmp_path):
 
     # 추출은 **진짜 이미지**를 쓴다 — 내용량 게이트가 실제로 픽셀을 읽기 때문에
     # 더미 바이트를 쓰면 게이트가 예외로 죽고 테스트는 그걸 못 본다.
-    # 후보마다 다른 그림을 준다 — 같으면 중복 게이트가 묶어버려 후보 생성을 못 본다
-    shade = iter(range(60, 255, 17))
     def fake_extract(video_path, t, out_path, quality=90):
         a = np.zeros((90, 160), dtype=np.uint8)
-        a[20:60, 30:120] = next(shade)  # 배경과 뚜렷이 다른 영역 = 내용 있음
+        a[20:60, 30:120] = 255  # 배경과 뚜렷이 다른 영역 = 내용 있음
         Image.fromarray(a).save(out_path)
         return True
     monkeypatch.setattr(frames_mod.media, "extract_frame", fake_extract)
@@ -120,7 +118,6 @@ def test_gate_params_are_recorded(stub_pipeline, tmp_path):
     p = r["params"]
     assert p["pair_dup_threshold"] == 0.93
     assert p["blank_area_threshold"] == 0.001
-    assert p["dup_area_threshold"] == 0.002
     assert p["body_band"] == [0.0, 1.0], "띠가 없으면 전체가 본문"
 
 

@@ -44,7 +44,7 @@ CUT_DELTA = 25.0
 
 def transition_aware_anchor_diff(video_path: Path, anchor_threshold: float = 0.02,
                                  rate_threshold: float = 0.0015,
-                                 cut_area_threshold: float = 0.04) -> dict:
+                                 cut_area_threshold: float = 0.02) -> dict:
     fps = media.get_fps(video_path)
     it = media.decode_gray_frames(video_path)
 
