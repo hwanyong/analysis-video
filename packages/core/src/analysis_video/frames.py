@@ -144,7 +144,7 @@ def build_frames(video_path: Path, out_dir: Path, *,
                  cache_dir: Path | None = None,
                  window: tuple[float, float] | None = None,
                  anchor_threshold: float = 0.02, rate_threshold: float = 0.0015,
-                 cut_area_threshold: float = 0.02,
+                 cut_area_threshold: float = 0.01,
                  blank_area_threshold: float = 0.001,
                  pair_dup_threshold: float = 0.93) -> dict:
     """out_dir = 이 분석 단위의 디렉터리, cache_dir = 검출 캐시를 둘 곳.
