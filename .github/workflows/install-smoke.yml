@@ -11,6 +11,11 @@ name: install-smoke
 #   3) 상류가 새 버전을 내면서 조합이 깨지는 것을 주간 cron 으로 감시한다
 #
 # 액션 핀은 ci.yml 머리말의 규칙을 따른다(setup-uv 만 전체 버전 — 메이저 태그 없음).
+#
+# 셸 규칙: GitHub 은 `run:` 을 **`bash -e`** 로 돌린다(잡 로그 머리의 `shell:` 줄에
+# 그대로 찍힌다). 스텝 첫 줄의 `set -uo pipefail` 은 -e 를 **끄지 못한다**. 그래서
+# "못 찾음"이 정상인 자리(grep 이 0건, 종료코드 1)는 반드시 `|| true` 로 흡수해야
+# 한다 — 안 그러면 검사가 통과해야 할 순간에 스텝이 통째로 죽는다. 실제로 겪었다.
 
 on:
   push:
@@ -85,8 +90,15 @@ jobs:
             uv pip install --dry-run --python "$2" --python-platform "$1" \
               --target "$RUNNER_TEMP/t" --no-build "$3" 2>&1
           }
-          backends_in() {   # 해석 결과에 들어온 STT 백엔드 이름들
-            printf '%s\n' "$1" | grep -oE "^ *\+ ($BACKENDS)==[^ ]+" \
+          backends_in() {   # 해석 결과에 들어온 STT 백엔드 이름들 (없으면 빈 문자열)
+            # grep 은 "한 건도 없음"을 종료코드 1로 알린다. 여기서 "없음"은 오류가
+            # 아니라 **답**이다 — 기본 설치 축은 백엔드가 없는 것이 정상이다.
+            # 흡수하지 않으면 그 정상 상태에서 스텝이 통째로 죽는다: GitHub 은
+            # run: 을 `bash -e` 로 돌리므로(로그 머리의 `shell:` 줄) 위의
+            # `set -uo pipefail` 로는 -e 가 꺼지지 않고, pipefail 이 grep 의 1을
+            # 파이프라인 밖으로 내보내며, 대입문의 명령 치환이 실패하면 -e 가
+            # 스크립트를 끝낸다. 즉 검사가 통과해야 할 바로 그 순간에 실패한다.
+            printf '%s\n' "$1" | { grep -oE "^ *\+ ($BACKENDS)==[^ ]+" || true; } \
               | sed -E 's/^ *\+ //' | sort -u | paste -sd, -
           }
           fail=0
@@ -214,11 +226,14 @@ jobs:
           # 내려가고, 그때 packages/gui/README.md 의 지원 범위 표를 갱신한다.
           # 2>&1 인 이유: uv 는 해석 목록("+ 패키지==버전")을 **stderr** 에 쓴다.
           # stdout 만 보면 언제나 빈 문자열이라 "해석 실패"만 찍힌다.
+          # `|| true` 인 이유: 못 찾는 것이 이 스텝에서는 보고 대상(아래
+          # ${v:-해석 실패})이지 실패가 아닌데, GitHub 이 run: 을 `bash -e` 로
+          # 돌려서 흡수하지 않으면 그 보고에 닿기 전에 스텝이 죽는다.
           for plat in x86_64-manylinux_2_28 aarch64-manylinux_2_31; do
             v=$(uv pip install --dry-run --python 3.12 --python-platform "$plat" \
                   --find-links "$RUNNER_TEMP/idx" \
                   --target "$RUNNER_TEMP/tg2" --no-build ./gui 2>&1 \
-                | grep -oE 'pyside6-essentials==[0-9.]+' | head -1)
+                | { grep -oE 'pyside6-essentials==[0-9.]+' || true; } | head -1)
             echo "$plat → ${v:-해석 실패}"
           done
 

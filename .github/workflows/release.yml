@@ -192,7 +192,12 @@ jobs:
           cp -R "$DIR" "$RUNNER_TEMP/smoke/pkg"
           # 워크스페이스 루트를 딸려 보내지 않는다 — 루트의 override·sources 선언은
           # 최종 사용자에게 적용되지 않으므로 여기서도 적용되면 안 된다.
-          # set -e 를 켜지 않은 스텝이라 가드는 명시적으로 exit 한다.
+          # 가드가 명시적으로 exit 하는 이유: 아래 조합 순회는 한 조합이 실패해도
+          # 끝까지 돌아야 하므로(어디까지 깨졌는지가 정보다) 실패를 fail 변수에
+          # 모으는데, 그러면 "여기서 즉시 멈춰야 하는" 전제 위반과 구분이 안 된다.
+          # 주의: 이 스텝도 GitHub 이 `bash -e` 로 돌린다 — 위 `set -uo pipefail` 은
+          # -e 를 끄지 못한다. "못 찾음이 정상"인 명령은 반드시 `||` 로 흡수할 것
+          # (install-smoke.yml 머리말 참조).
           if [ -e "$RUNNER_TEMP/smoke/pyproject.toml" ]; then
             echo "::error::워크스페이스 루트가 딸려 왔습니다 — 스모크가 무의미해집니다"
             exit 1
