@@ -64,6 +64,107 @@ def save_state(out_dir: Path, state: dict) -> None:
     write_json_atomic(state_path(out_dir), state)
 
 
+# ─── 분석 대상 지목 ──────────────────────────────────────────────────────
+# "어떤 경로가 이 분석을 가리키는가"는 state.json의 계약과 같은 것이라 여기 산다.
+# CLI와 GUI가 각자 풀면 두 도구의 판단이 갈린다 — 실제로 갈렸다: GUI는 영상
+# 파일과 .analysis 디렉터리를 모두 받는데 CLI는 영상만 받아, 디렉터리를 준
+# `status`가 뒤에 .analysis를 한 번 더 붙여 "아직 분석 안 됨"이라 답했다.
+ANALYSIS_SUFFIX = ".analysis"
+
+
+def absolute(path: Path) -> Path:
+    """cwd 의존만 걷어낸 절대경로 — **심볼릭 링크는 따라가지 않는다**.
+
+    Path.resolve()를 쓰면 안 된다. 그것은 링크까지 실제 경로로 바꾸므로 원본을
+    링크로 가리키는 사용자의 분석 디렉터리가 통째로 자리를 옮긴다:
+    `~/videos/lecture.mkv -> /mnt/big/L01.mkv`를 분석해 두고 같은 명령을 다시
+    부르면 출력이 `~/videos/lecture.mkv.analysis`가 아니라
+    `/mnt/big/L01.mkv.analysis`로 잡혀, 끝나 있던 분석은 어디에서도 보이지 않고
+    (state.json을 못 찾으니 이어하기가 성립하지 않는다) 전사·검출이 처음부터
+    다시 돈다. 실측으로 확인한 재현이다.
+
+    원본 동일성 판정은 여기가 아니라 check_source의 지문이 맡는다 — 그쪽은
+    resolve()로 실제 경로를 보므로 링크와 실체가 같은 파일임을 안다.
+    디렉터리 **이름**만 사용자가 준 경로를 따르면 된다."""
+    return Path(os.path.abspath(path))
+
+
+def analysis_dir(video: Path) -> Path:
+    """이 영상의 기본 분석 디렉터리 — `<영상>.analysis/`."""
+    return video.parent / f"{video.name}{ANALYSIS_SUFFIX}"
+
+
+def resolve_out(video: Path, out: Path | None) -> Path:
+    """출력 경로는 반드시 절대경로로 만든다.
+
+    상대경로를 그대로 두면 파생 경로가 state.json에 기록되어 1회차 실행의 cwd가
+    숨은 기준점이 된다. 다른 폴더에서 이어 돌리면 그 기준을 잃는데(어디였는지는
+    어디에도 기록되지 않는다), 재실행해도 완료된 스테이지가 skipped=True로 같은
+    상대경로를 되돌려주므로 스스로 복구되지 않는다 — 그 분석 디렉터리는 영구히
+    못 쓰게 된다. 호출자가 임의의 작업 폴더에서 부르는 것이 정상 사용이므로
+    (에이전트가 프로젝트를 옮겨 다닌다) 입력 형태와 무관하게 여기서 고정한다."""
+    return absolute(out if out is not None else analysis_dir(video))
+
+
+def check_video(path: Path) -> Path:
+    if not path.exists():
+        # details를 채우는 이유: GUI가 이 오류를 자기 언어의 문장으로 다시 쓴다.
+        # 메시지를 파싱하게 두면 문구를 고치는 날 GUI가 조용히 갈린다.
+        raise CliError(EXIT_INPUT, "video-not-found", f"비디오 파일이 없습니다: {path}",
+                       details={"path": str(path)})
+    # 절대경로로 고정 — 출력 JSON·hint·state.json 어디에도 cwd 의존이 남지 않게.
+    # check_source가 지문을 만들 때 resolve()로 실체를 보므로 원본 대조 규칙은 그대로다.
+    return absolute(path)
+
+
+def resolve_target(path: Path, out: Path | None = None) -> tuple[Path, Path]:
+    """지목한 경로를 (원본 영상, 분석 디렉터리)로 푼다.
+
+    영상 파일도 받고 이미 분석한 `.analysis` 디렉터리도 받는다. 디렉터리를 받는
+    쪽이 필요한 이유는 분석이 끝난 뒤의 작업(status·review·frame·clean)에서는
+    사용자가 **산출물을 보고 있기 때문**이다 — 손에 든 경로가 디렉터리인데 원본
+    영상 경로를 되짚어 적으라고 요구할 근거가 없다. 원본이 어디였는지는 이미
+    state.json에 적혀 있다.
+
+    디렉터리로 지목하면 --out은 줄 수 없다. 둘 다 출력 위치를 정하는 말이라
+    다르면 어느 쪽이 이겨도 나머지 하나가 조용히 무시되는데, 무시된 쪽이
+    사용자가 의도한 것이면 엉뚱한 디렉터리를 만들고 끝난다."""
+    if not path.is_dir():
+        video = check_video(path)
+        return video, resolve_out(video, out)
+
+    out_dir = absolute(path)
+    if out is not None and absolute(out) != out_dir:
+        raise CliError(EXIT_INPUT, "target-conflict",
+                       "분석 디렉터리를 지목하면서 --out을 함께 줄 수는 없습니다",
+                       hint="둘 중 하나만 주세요 — 디렉터리만 주거나, "
+                            "원본 영상과 --out을 함께 주거나",
+                       details={"target": str(out_dir), "out": str(absolute(out))})
+    if not state_path(out_dir).exists():
+        raise CliError(EXIT_INPUT, "not-analyzed",
+                       f"분석 디렉터리가 아닙니다 — state.json이 없습니다: {out_dir}",
+                       hint="원본 영상을 지목해 `analysis-video analyze <영상>`으로 "
+                            "먼저 분석하세요",
+                       details={"path": str(out_dir)})
+    src = (load_state(out_dir).get("source") or {}).get("path")
+    if not src:
+        raise CliError(EXIT_INPUT, "not-analyzed",
+                       f"분석 디렉터리에 원본 영상이 기록되어 있지 않습니다: {out_dir}",
+                       hint="원본 영상을 지목해 `analysis-video analyze <영상>`으로 "
+                            "먼저 분석하세요",
+                       details={"path": str(out_dir)})
+    video = Path(src)
+    if not video.exists():
+        # 산출물만 옮겨 왔거나 원본을 지운 경우. 여기서 멈추지 않으면 아래 단계가
+        # 없는 파일을 열며 죽고, 그때는 무엇이 없는지가 메시지에 남지 않는다.
+        raise CliError(EXIT_INPUT, "source-missing",
+                       f"state.json이 가리키는 원본 영상이 없습니다: {src}",
+                       hint="원본을 그 자리에 되돌려 놓거나, 원본을 지목해 "
+                            "새 --out으로 다시 분석하세요",
+                       details={"path": str(out_dir), "source": src})
+    return absolute(video), out_dir
+
+
 def check_source(state: dict, video_path: Path) -> None:
     """다른 원본으로 이어서 돌리는 사고 방지 — 경로·크기 지문 대조.
 

@@ -24,7 +24,6 @@ state.json 덕분에 같은 명령 재실행 = 이어하기(타임아웃 내성)
 """
 import argparse
 import json
-import os
 import sys
 from importlib.util import find_spec
 from pathlib import Path
@@ -40,42 +39,12 @@ from .stt import lang, subtitles
 from .stt.base import (DEFAULT_MODEL, MODEL_SIZES, add_notes, empty_result,
                        mark_target_language)
 
-def absolute(path: Path) -> Path:
-    """cwd 의존만 걷어낸 절대경로 — **심볼릭 링크는 따라가지 않는다**.
+def resolve_target(args) -> tuple[Path, Path]:
+    """`<video>` 커맨드 아홉 개가 공유하는 입구 — 지목한 경로와 --out을 푼다.
 
-    Path.resolve()를 쓰면 안 된다. 그것은 링크까지 실제 경로로 바꾸므로 원본을
-    링크로 가리키는 사용자의 분석 디렉터리가 통째로 자리를 옮긴다:
-    `~/videos/lecture.mkv -> /mnt/big/L01.mkv`를 분석해 두고 같은 명령을 다시
-    부르면 출력이 `~/videos/lecture.mkv.analysis`가 아니라
-    `/mnt/big/L01.mkv.analysis`로 잡혀, 끝나 있던 분석은 어디에서도 보이지 않고
-    (state.json을 못 찾으니 이어하기가 성립하지 않는다) 전사·검출이 처음부터
-    다시 돈다. 실측으로 확인한 재현이다.
-
-    원본 동일성 판정은 여기가 아니라 manifest.check_source의 지문이 맡는다 —
-    그쪽은 resolve()로 실제 경로를 보므로 링크와 실체가 같은 파일임을 안다.
-    디렉터리 **이름**만 사용자가 준 경로를 따르면 된다."""
-    return Path(os.path.abspath(path))
-
-
-def resolve_out(video: Path, out: Path | None) -> Path:
-    """출력 경로는 반드시 절대경로로 만든다.
-
-    상대경로를 그대로 두면 파생 경로가 state.json에 기록되어 1회차 실행의 cwd가
-    숨은 기준점이 된다. 다른 폴더에서 이어 돌리면 그 기준을 잃는데(어디였는지는
-    어디에도 기록되지 않는다), 재실행해도 완료된 스테이지가 skipped=True로 같은
-    상대경로를 되돌려주므로 스스로 복구되지 않는다 — 그 분석 디렉터리는 영구히
-    못 쓰게 된다. 호출자가 임의의 작업 폴더에서 부르는 것이 정상 사용이므로
-    (에이전트가 프로젝트를 옮겨 다닌다) 입력 형태와 무관하게 여기서 고정한다."""
-    base = out if out is not None else video.parent / f"{video.name}.analysis"
-    return absolute(base)
-
-
-def check_video(path: Path) -> Path:
-    if not path.exists():
-        raise CliError(EXIT_INPUT, "video-not-found", f"비디오 파일이 없습니다: {path}")
-    # 절대경로로 고정 — 출력 JSON·hint·state.json 어디에도 cwd 의존이 남지 않게.
-    # check_source가 지문을 만들 때 resolve()로 실체를 보므로 원본 대조 규칙은 그대로다.
-    return absolute(path)
+    manifest에 위임한다. 경로 규약(`<영상>.analysis`, 절대경로 고정, 디렉터리로도
+    지목 가능)은 GUI도 쓰는 것이라 코어 한 곳에만 있어야 한다."""
+    return manifest.resolve_target(args.video, args.out)
 
 
 def stage_command(command: str, video: Path, out_dir: Path) -> str:
@@ -85,7 +54,7 @@ def stage_command(command: str, video: Path, out_dir: Path) -> str:
     exit 2가 되고, --out으로 기본 위치를 벗어난 분석은 --out 없이 재실행하면
     엉뚱한 곳을 새로 만든다. 둘 다 여기서 한 번에 막는다."""
     cmd = f"analysis-video {command} {video}"
-    if out_dir != resolve_out(video, None):
+    if out_dir != manifest.resolve_out(video, None):
         cmd += f" --out {out_dir}"
     return cmd
 
@@ -424,15 +393,24 @@ def _subtitle_transcript(explicit: Path | None,
     notes를 제자리에서 늘리는 것은 의도적이다: 여기서 못 쓴 사유가 아래 단계
     (whisper·빈 전사)의 산출물까지 따라가야 "왜 whisper가 돌았는가"가 남는다."""
     if explicit is not None:
-        result, why = subtitles.result_from_file(explicit, duration, kind="explicit")
+        # 품질 검사를 강제하지 않는다 — 후보 여럿에서 고르기 위한 검사인데 지목이
+        # 그 고르기를 대신했다(subtitles.result_from_cues 독스트링). 사유는 버리지
+        # 않고 메모로 따라간다.
+        result, why = subtitles.result_from_file(explicit, duration, kind="explicit",
+                                                 enforce_quality=False)
         if result is None:
-            # 지목받은 파일이다. 조용히 다른 출처로 내려가면 사용자가 요청한 것과
-            # 다른 산출물이 같은 이름으로 나온다.
+            # 여기 오는 것은 읽지 못했거나 대사가 하나도 없는 파일뿐이다. 조용히
+            # 다른 출처로 내려가면 사용자가 요청한 것과 다른 산출물이 같은 이름으로
+            # 나오므로, 폴백하지 않고 멈춘다.
             raise CliError(EXIT_INPUT, "transcript-rejected",
                            f"--transcript로 지정한 자막을 쓸 수 없습니다: {' / '.join(why)}",
-                           hint="자동 탐색에 맡기려면 --transcript 없이, 자막을 아예 "
-                                "무시하려면 --no-subtitles로 실행하세요",
+                           hint="다른 자막 파일을 지정하거나, 자동 탐색에 맡기려면 "
+                                "--transcript 없이, 자막을 아예 무시하려면 "
+                                "--no-subtitles로 실행하세요",
                            details={"path": str(explicit), "notes": why})
+        for note in why:
+            if note.startswith(subtitles.WAIVED):
+                log(f"[transcribe] 경고: {note}")
         _log_adopted(f"지정한 자막 '{explicit.name}'", result)
         return add_notes(result, notes)
 
@@ -703,8 +681,7 @@ def run_frame_at(video: Path, out_dir: Path, at: float, reason: str,
 # ---------- 서브커맨드 ----------
 
 def cmd_split(args) -> int:
-    video = check_video(args.video)
-    out_dir = resolve_out(video, args.out)
+    video, out_dir = resolve_target(args)
     r = run_split(video, out_dir)
     emit({"ok": True, "out_dir": str(out_dir), **r,
           "next": next_step(video, out_dir)})
@@ -712,8 +689,7 @@ def cmd_split(args) -> int:
 
 
 def cmd_transcribe(args) -> int:
-    video = check_video(args.video)
-    out_dir = resolve_out(video, args.out)
+    video, out_dir = resolve_target(args)
     run_split(video, out_dir)  # 멱등 — 미완료면 수행
     r = run_transcribe(video, out_dir, args.model, args.stt_backend, args.language,
                        force=args.force, transcript=args.transcript,
@@ -724,8 +700,7 @@ def cmd_transcribe(args) -> int:
 
 
 def cmd_frames(args) -> int:
-    video = check_video(args.video)
-    out_dir = resolve_out(video, args.out)
+    video, out_dir = resolve_target(args)
     r = run_frames(video, out_dir, args.range, _thresholds(args))
     emit({"ok": True, "out_dir": str(out_dir), **r,
           "next": next_step(video, out_dir)})
@@ -733,8 +708,7 @@ def cmd_frames(args) -> int:
 
 
 def cmd_frame(args) -> int:
-    video = check_video(args.video)
-    out_dir = resolve_out(video, args.out)
+    video, out_dir = resolve_target(args)
     entry = run_frame_at(video, out_dir, args.at, args.reason, args.run)
     # 결과 JSON은 요약만 — 전체 대사는 metadata.json의 requested[]에 있다 (stdout 비대 방지)
     summary = {k: entry[k]
@@ -750,8 +724,7 @@ def cmd_frame(args) -> int:
 
 
 def cmd_analyze(args) -> int:
-    video = check_video(args.video)
-    out_dir = resolve_out(video, args.out)
+    video, out_dir = resolve_target(args)
     stages = [run_split(video, out_dir)]
     if args.until == "split":
         emit({"ok": True, "out_dir": str(out_dir), "stages": stages,
@@ -774,8 +747,7 @@ def cmd_analyze(args) -> int:
 
 
 def cmd_status(args) -> int:
-    video = check_video(args.video)
-    out_dir = resolve_out(video, args.out)
+    video, out_dir = resolve_target(args)
     state = manifest.load_state(out_dir)
     units = []
     for entry in runs.load_index(out_dir):
@@ -820,8 +792,7 @@ def _read_stdin_body() -> str:
 
 
 def cmd_review(args) -> int:
-    video = check_video(args.video)
-    out_dir = resolve_out(video, args.out)
+    video, out_dir = resolve_target(args)
     unit = resolve_run(out_dir, args.run)
     run_name = unit.name
     ctx = unit / "context.md"
@@ -865,7 +836,7 @@ def cmd_review(args) -> int:
         result = {"action": {"create": "created", "refresh": "refreshed",
                              "update": "updated"}[action], "path": str(path)}
     if args.export_dir is not None:
-        result["export"] = _export_review(path, absolute(args.export_dir),
+        result["export"] = _export_review(path, manifest.absolute(args.export_dir),
                                           video, run_name)
     emit({"ok": True, "out_dir": str(out_dir), "stage": "review", "run": run_name,
           **result, "next": next_step(video, out_dir)})
@@ -892,8 +863,7 @@ def _export_review(src: Path, dest_dir: Path, video: Path, run: str) -> dict:
 
 
 def cmd_clean(args) -> int:
-    video = check_video(args.video)
-    out_dir = resolve_out(video, args.out)
+    video, out_dir = resolve_target(args)
     manifest.load_state(out_dir)  # 스키마 게이트 — 남의 디렉터리를 지우지 않는다
     if args.level is None:
         # 보고만 한 실행도 `next`의 모양은 같아야 한다 — 커맨드마다 타입이 다른
@@ -1008,8 +978,7 @@ def cmd_install_skill(args) -> int:
 
 
 def cmd_debug_report(args) -> int:
-    video = check_video(args.video)
-    out_dir = resolve_out(video, args.out)
+    video, out_dir = resolve_target(args)
     state = manifest.load_state(out_dir)
     manifest.require_done(state, "frames", stage_hint("frames", video, out_dir))
     unit = resolve_run(out_dir, args.run)
@@ -1029,9 +998,13 @@ class _Parser(argparse.ArgumentParser):
 
 
 def _add_video(sp: argparse.ArgumentParser) -> None:
-    sp.add_argument("video", type=Path, help="원본 비디오 파일")
+    # 이름은 video로 둔다 — 분석 디렉터리는 원본을 가리키는 또 하나의 표기이지
+    # 다른 종류의 대상이 아니다(manifest.resolve_target이 둘을 같은 쌍으로 푼다).
+    sp.add_argument("video", type=Path,
+                    help="원본 비디오 파일, 또는 이미 분석한 <video>.analysis 디렉토리")
     sp.add_argument("--out", type=Path, default=None,
-                    help="출력 디렉토리 (기본: <video>.analysis/)")
+                    help="출력 디렉토리 (기본: <video>.analysis/). "
+                         "분석 디렉토리를 지목했다면 줄 수 없다")
 
 
 def _add_stt_options(sp: argparse.ArgumentParser) -> None:
@@ -1053,8 +1026,9 @@ def _add_subtitle_options(sp: argparse.ArgumentParser) -> None:
     어떻게 돌릴지가 아니라 **whisper를 돌릴지 말지, 무엇을 대신 읽을지**를 정하고,
     --no-subtitles를 준 순간 --model·--stt-backend의 의미가 비로소 생긴다."""
     sp.add_argument("--transcript", type=Path, default=None, metavar="PATH",
-                    help="이 자막 파일을 전사로 쓴다 (.srt/.vtt/.smi). "
-                         "쓸 수 없는 파일이면 다른 출처로 넘어가지 않고 오류로 멈춘다")
+                    help="이 자막 파일을 전사로 쓴다 (.srt/.vtt/.smi). 지목한 것이므로 "
+                         "강제 자막·자동 생성 자막이어도 그대로 쓰고 사유만 기록한다. "
+                         "읽지 못하는 파일이면 다른 출처로 넘어가지 않고 오류로 멈춘다")
     sp.add_argument("--sub-lang", metavar="CODE", default=None,
                     help="쓸 자막의 언어 코드 (기본: 시스템 로케일, 없으면 언어 무관). "
                          "사이드카 파일과 내장 트랙의 순위에만 쓰인다 — "

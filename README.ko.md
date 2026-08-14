@@ -3,9 +3,7 @@
 **강의·화면녹화·슬라이드 영상을 LLM이 실제로 읽을 수 있는 마크다운 한 파일로 바꾸는 CLI.
 화면 이미지 + 그 화면이 떠 있던 시간 + 그동안의 대사를 화면 단위로 정렬해 내보낸다.**
 
-<!-- PyPI 배지는 첫 게시 뒤에 붙인다 — 등록되지 않은 이름은 shields.io가 "not found"로
-     렌더링해서, 저장소가 공개되는 첫날 깨진 배지가 맨 위에 놓인다. 복구 문안은
-     docs/RELEASING.md "버전 올리기"에 있다. -->
+[![PyPI](https://img.shields.io/pypi/v/analysis-video)](https://pypi.org/project/analysis-video/)
 [![CI](https://github.com/hwanyong/analysis-video/actions/workflows/ci.yml/badge.svg)](https://github.com/hwanyong/analysis-video/actions/workflows/ci.yml)
 [![Python 3.11–3.14](https://img.shields.io/badge/python-3.11%E2%80%933.14-blue)](#지원-환경)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -116,10 +114,6 @@ Gemini 영상 직접 입력 | 고정 간격 프레임 + 오디오. 기본값이�
 
 ## 설치
 
-> **아직 PyPI에 없다.** 첫 릴리스를 준비 중이라 오늘은 `pip install analysis-video` 가
-> 해석되지 않는다. 아래 "저장소에서 바로 설치"를 쓰면 된다 — 같은 패키지이고, 릴리스
-> 뒤에도 그 명령은 그대로 동작한다.
-
 ```bash
 uvx analysis-video@latest analyze lecture.mp4   # 설치 없이 실행 (npx에 해당)
 uv tool install analysis-video                  # 전역 명령으로 설치 (npm i -g에 해당)
@@ -162,7 +156,7 @@ pip install 'analysis-video[stt]'
 
 ### 저장소에서 바로 설치
 
-첫 릴리스 전에도 되고, 릴리스 뒤에는 아직 배포되지 않은 `main` 의 수정을 쓸 때 쓴다.
+아직 배포되지 않은 `main` 의 수정을 쓸 때 쓴다.
 저장소에 패키지가 둘이라 **하위 디렉터리를 반드시 밝혀야 한다**:
 
 ```bash
@@ -183,7 +177,7 @@ pip install 'git+https://github.com/hwanyong/analysis-video#subdirectory=package
 ```bash
 uvx analysis-video-gui@latest <영상 또는 .analysis 경로>
 uvx --from 'git+https://github.com/hwanyong/analysis-video#subdirectory=packages/gui' \
-    analysis-video-gui <영상 또는 .analysis 경로>      # 릴리스 전
+    analysis-video-gui <영상 또는 .analysis 경로>      # 아직 배포 안 된 main
 ```
 
 ## AI 에이전트에 붙이기
@@ -336,10 +330,16 @@ analysis-video clean  lecture.mp4 --level images
 큐가 영상 길이 밖으로 나감 | 어간이 같아 딸려 들어온 **다른 영상의 자막** |
 롤업 비율 30% 초과 | **자동 생성 자막(ASR)** — 앞 큐를 물고 자라는 형태 |
 
-거부는 조용히 넘어가지 않는다. 2순위는 사유를 기록하고 **다음 후보**로 내려가지만(후보가 전부
-떨어져야 위스퍼다),
-**`--transcript` 로 직접 지목한 파일은 폴백 없이 종료코드 2로 멈춘다** — 사용자가 요청한 것과
-다른 산출물이 같은 이름으로 나오면 안 되기 때문이다.
+**이 네 검사는 2순위에만 적용된다** — 도구가 스스로 찾아낸 후보 여럿에서 하나를 고르기 위한
+것이기 때문이다. 거부된 후보는 사유를 남기고 **다음 후보**로 내려간다(후보가 전부 떨어져야
+위스퍼다).
+
+**`--transcript` 로 지목한 파일은 검사에 걸려도 쓴다.** 파일을 짚은 순간 고르는 일은 이미
+끝났고, 남는 것은 "이 파일이 어떤 자막인가"라는 정보뿐이다 — 그래서 판정을 거부가 아니라
+**신고**로 남긴다(`source.notes` + stderr 경고). 부분만 덮는 강제 자막을 알고도 쓰겠다는
+경우가 그것이다. 여기서 멈추는 것은 **쓸 것이 없는 파일**뿐이고(없는 파일 · 읽지 못하는
+파일 · 큐가 하나도 없는 파일) 그때도 폴백 없이 종료코드 2다 — 사용자가 요청한 것과 다른
+산출물이 같은 이름으로 나오면 안 되기 때문이다.
 
 어느 출처가 이겼는지, 무엇이 왜 거부됐는지는 전부 `transcript.json` 의 `source` 에 남는다.
 자막을 아예 보지 않으려면 `--no-subtitles` 다.
@@ -414,7 +414,8 @@ Intel Mac · Linux · Windows | `faster-whisper` (CPU int8) | |
 - **종료코드** — `0` 성공 · `1` 내부 오류 · `2` 입력 오류 · `3` 스테이지 순서 위반 ·
   `4` **그 실행에 필요해진 것이 없음** — 환경을 진단하는 자리가 아니라 필요해진 자리에서
   난다(`doctor` 는 음성 인식이 없는 기계에서도 종료코드 0이다. 자막 경로에는 필요 없으므로)
-- **경로** — 전부 절대경로라 작업 폴더가 무관하다
+- **경로** — 전부 절대경로라 작업 폴더가 무관하다. `<영상>` 자리에는 영상 파일도,
+  이미 만들어 둔 `.analysis` 디렉터리도 넣을 수 있다
 - **재개** — 같은 명령을 다시 부르면 완료된 스테이지를 건너뛴다
   (예외 둘: 전사 입력 자막이 바뀌면 `--force` 없이도 다시 전사하고, 전사를 다시 쓰면
   `frames` 가 미완료로 돌아간다)
@@ -536,7 +537,7 @@ torch도 없는 기본 설치입니다. `[stt]` 를 붙이면 **326MB · 1,180MB
 
 **아무것도 설치하지 않고 쓸 수 있나요?**
 `uvx analysis-video@latest …` 로 일회용 환경에서 바로 돕니다. `npx` 의 파이썬판입니다.
-첫 릴리스 전에는 저장소를 가리키면 됩니다:
+아직 배포되지 않은 `main` 을 쓰려면 저장소를 가리키면 됩니다:
 `uvx --from 'git+https://github.com/hwanyong/analysis-video#subdirectory=packages/core' analysis-video …`
 
 **MCP 서버는 없나요?**

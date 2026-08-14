@@ -27,10 +27,11 @@ what you made of it back with `review`, which is where your analysis is kept.
 
 ## What you need first: the video, as a file
 
-`<video>` is always a path to a file on the machine you are running on. There is
-no URL form: a link passed where `<video>` goes is just a path that does not
-exist (`video-not-found`, exit 2). Everything below reads a file that is already
-on disk — no video is ever fetched for you.
+`<video>` is always a path on the machine you are running on — the video file
+itself, or an `.analysis` directory a previous run produced (see "The `<video>`
+argument"). There is no URL form: a link passed where `<video>` goes is just a
+path that does not exist (`video-not-found`, exit 2). Everything below reads a
+file that is already on disk — no video is ever fetched for you.
 
 The tool reaches the network for one thing, and only when it actually has to
 recognise speech: the STT model weights, pulled from HuggingFace the first time
@@ -176,6 +177,12 @@ this video:
   not a limitation: they are speech recognition already, no better than what
   runs here, and their rollup repetition would put one sentence on several
   screens in a row.
+
+These four decide **which candidate wins** among the ones the tool found for
+itself, so they apply to steps 2 and 3 only. Name a file with `--transcript`
+and the choosing is already done: that file is used, and a finding becomes a
+line in `source.notes` instead of a refusal. Use that when you know the
+subtitle is partial and want it anyway.
 
 One structural consequence: `transcript.json` has an empty `words` array for
 every subtitle source. Cue timing is per line, not per word. Nothing in
@@ -709,20 +716,38 @@ error: error result + exit 2.
 
 ## Shared options
 
+### The `<video>` argument
+Every command that takes one accepts **either the source video or an
+`.analysis` directory you already have**. Once a run exists, `status`,
+`review`, `frame` and `clean` are things you do while holding the outputs, so
+the directory in your hand is a valid way to name the work — the source path is
+already recorded in its `state.json`. A directory with no `state.json` is
+`not-analyzed`, and one whose recorded source has moved away is
+`source-missing` (both exit 2).
+
 ### `--out DIR`
 Accepted by every command that takes a `<video>`. Default: `<video>.analysis/`
 next to the video file. `doctor` and `agent-guide` take no paths. Pass the same
-`--out` on every later invocation, or the resumed stages will not be found.
+`--out` on every later invocation, or the resumed stages will not be found. It
+cannot be combined with naming an `.analysis` directory directly
+(`target-conflict`, exit 2) — both say where the output lives, so a
+disagreement would silently discard one of them.
 
 ### `--transcript PATH` — analyze, transcribe
 Take the transcript from this subtitle file: `.srt`, `.vtt`/`.webvtt`,
-`.smi`/`.sami`. Naming a file is a demand, not a preference — a missing file is
-`transcript-not-found` and one that fails the checks is `transcript-rejected`
-(both exit 2, with the individual reasons in `error.details.notes`), never a
-quiet fall-through to some other source. This is also how you pick one specific
-track out of a container: run `split`, read its `subtitles` list, and pass the
-`subs/track<n>.srt` you want. Cannot be combined with `--no-subtitles`
-(`conflicting-options`, exit 2).
+`.smi`/`.sami`. Naming a file is a demand, not a preference: it is used **even
+when the quality checks would have refused it**. Those checks (cue count,
+coverage, rollup, span) exist to choose among candidates the tool found by
+itself, and naming a file is that choice already made — so a forced-subtitle
+track covering 11% of the runtime, or an auto-generated one, is accepted, with
+the finding kept in `source.notes` and logged as a warning. What still stops
+the run is a file that yields nothing to use: a missing file is
+`transcript-not-found`, and an unreadable or cue-less one is
+`transcript-rejected` (both exit 2, with the individual reasons in
+`error.details.notes`). Neither ever falls through quietly to some other
+source. This is also how you pick one specific track out of a container: run
+`split`, read its `subtitles` list, and pass the `subs/track<n>.srt` you want.
+Cannot be combined with `--no-subtitles` (`conflicting-options`, exit 2).
 
 ### `--sub-lang CODE` — analyze, transcribe
 Which language the **subtitles** should be in (`ko`, `en`, `ko-KR`, `kor`, ...).

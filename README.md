@@ -2,9 +2,7 @@
 
 **Convert lecture, screencast, and slide-based video into a single Markdown file an LLM can actually read: keyframes + timestamps + transcript, aligned screen by screen.**
 
-<!-- PyPI 배지는 첫 게시 뒤에 붙인다 — 등록되지 않은 이름은 shields.io가 "not found"로
-     렌더링해서, 저장소가 공개되는 첫날 깨진 배지가 맨 위에 놓인다. 복구 문안은
-     docs/RELEASING.md "버전 올리기"에 있다. -->
+[![PyPI](https://img.shields.io/pypi/v/analysis-video)](https://pypi.org/project/analysis-video/)
 [![CI](https://github.com/hwanyong/analysis-video/actions/workflows/ci.yml/badge.svg)](https://github.com/hwanyong/analysis-video/actions/workflows/ci.yml)
 [![Python 3.11–3.14](https://img.shields.io/badge/python-3.11%E2%80%933.14-blue)](#platform-support)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -121,10 +119,6 @@ by timestamps you supply. You do not need to know in advance which moments matte
 - **Build a dataset** of screen-state → spoken-explanation pairs
 
 ## Install
-
-> **Not on PyPI yet.** The first release is being prepared, so `pip install analysis-video`
-> does not resolve today. Use the Git URL below — it is the same package, and the command
-> keeps working after the release.
 
 ```bash
 uvx analysis-video@latest analyze lecture.mp4   # run without installing (like npx)
@@ -288,7 +282,7 @@ video. So the dialogue is taken from the **first source that works**:
 
 | | Source | If it can't be used |
 |---|---|---|
-1 | `--transcript FILE` — an `.srt` / `.vtt` / `.smi` file you name | **stops with exit 2.** You named this file; silently substituting another source would return something other than what you asked for |
+1 | `--transcript FILE` — an `.srt` / `.vtt` / `.smi` file you name | **stops with exit 2** when the file yields nothing to use. You named this file; silently substituting another source would return something other than what you asked for |
 2 | **the subtitles this video already has** — every sidecar beside it (`lecture.ko.srt`, `lecture.srt`, `lecture.mp4.srt`) *and* every text track inside the container (demuxed by `split` to `subs/track<n>.srt`), ranked as **one** list | records why, then opens the next candidate; falls through only when every one is spent |
 3 | **Whisper**, decoding the original video's audio directly (no intermediate file) | if the video has no audio at all, the transcript is written empty rather than failing |
 
@@ -309,6 +303,13 @@ re-using another engine's speech recognition is strictly worse than running Whis
 you choose the model and the output records which engine produced it. Embedded tracks are
 filtered earlier still — bitmap subtitles (PGS, VobSub) carry no text at all, and tracks
 the container flags `forced` are never extracted.
+
+Those four checks belong to step 2, where the tool is choosing among candidates it found
+for itself. **Name a file with `--transcript` and the choosing is already done**: the file
+is used even if a check would have refused it, and the finding becomes a line in
+`source.notes` plus a warning on stderr. That is how you use a partial forced-subtitle
+track deliberately. What still stops the run at step 1 is a file with nothing in it to
+use — missing, unreadable, or holding no cues at all.
 
 Every step is written to `transcript.json` under `source`: `kind`
 (`explicit` · `sidecar` · `embedded` · `whisper` · `none`), the file path or track index,
@@ -423,7 +424,8 @@ afterwards. `analysis-video doctor` reports cache state without touching the net
   `4` something the run needed is missing — raised where the need arises, not where the
   environment is inspected (`doctor` exits 0 on a machine with no speech recognition,
   because subtitles need none)
-- **paths** — always absolute, so the working directory never matters
+- **paths** — always absolute, so the working directory never matters. `<video>` takes
+  either the video file or the `.analysis` directory of a run you already have
 - **resume** — re-running a command skips completed stages
 - **`next`** — every `<video>` command ends with the same object, so the caller never has
   to know which command it just ran:

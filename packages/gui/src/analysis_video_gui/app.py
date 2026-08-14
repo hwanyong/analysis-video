@@ -11,6 +11,26 @@ from . import i18n
 from .i18n import tr
 
 
+# 코어가 내는 CliError.kind → GUI 카탈로그의 문장과 그 문장이 쓰는 값.
+# 코어 메시지는 한국어 전용이라 그대로 내보내지 않고, details의 값만 받아
+# 여기서 사용자 언어로 다시 쓴다 — 메시지 문자열을 파싱하지는 않는다.
+# state.json은 언제나 분석 디렉토리 바로 아래에 있으므로 그 부모가 out_dir이다.
+_ERRORS = {
+    "video-not-found": lambda d: tr("app.err.no_file", path=d["path"]),
+    "not-analyzed": lambda d: tr("app.err.no_state", out_dir=d["path"]),
+    "source-missing": lambda d: tr("app.err.source_missing", src=d["source"]),
+    "schema-mismatch": lambda d: tr("app.err.schema", out_dir=Path(d["path"]).parent,
+                                    expected=d["expected"], found=d["found"]),
+}
+
+
+def _die(e: CliError) -> SystemExit:
+    """코어의 거부를 GUI의 종료 메시지로. 모르는 kind는 코어 문장을 그대로 쓴다 —
+    번역이 없다고 오류를 삼키면 사용자는 창이 안 뜨는 이유를 알 수 없다."""
+    render = _ERRORS.get(e.kind)
+    return SystemExit(render(e.details) if render else str(e))
+
+
 def _state(out_dir: Path) -> dict:
     """분석 디렉토리의 state.json — 읽기도 형식 대조도 코어(manifest)에 맡긴다.
 
@@ -23,35 +43,25 @@ def _state(out_dir: Path) -> dict:
     try:
         return manifest.load_state(out_dir)
     except CliError as e:
-        # load_state가 내는 CliError는 형식 불일치 하나뿐이고 그 details는 두 칸을
-        # 항상 채운다. 코어 메시지는 한국어 전용이라 그대로 쓰지 않고, 값만 받아
-        # GUI 카탈로그의 문장에 끼운다.
-        raise SystemExit(tr("app.err.schema", out_dir=out_dir,
-                            expected=e.details["expected"],
-                            found=e.details["found"])) from e
+        raise _die(e) from e
 
 
 def _resolve(path: Path) -> tuple[Path, Path]:
-    """비디오 파일 또는 .analysis 디렉토리 어느 쪽을 받아도 (video, out_dir)로 푼다."""
-    if path.is_dir():
-        out_dir = path
-        # load_state는 없는 state.json을 빈 상태로 돌려준다(정상적인 첫 실행) —
-        # 디렉토리를 지목한 경우엔 그게 곧 "분석한 적 없는 디렉토리"라 여기서 가른다.
-        if not manifest.state_path(out_dir).exists():
-            raise SystemExit(tr("app.err.no_state", out_dir=out_dir))
-        src = _state(out_dir)["source"]["path"]
-        video = Path(src)
-        if not video.exists():
-            raise SystemExit(tr("app.err.source_missing", src=src))
-        return video, out_dir
-    if not path.exists():
-        raise SystemExit(tr("app.err.no_file", path=path))
-    # 비디오로 열어도 결국 같은 디렉토리를 읽는다 — 형식 대조를 이쪽만 빼면
-    # 거부되는 디렉토리를 여는 우회로가 하나 남는다. 아직 분석하지 않았으면
-    # state.json이 없어 그대로 통과한다.
-    out_dir = path.parent / f"{path.name}.analysis"
+    """비디오 파일 또는 .analysis 디렉토리 어느 쪽을 받아도 (video, out_dir)로 푼다.
+
+    **푸는 규약은 코어(manifest.resolve_target)에 있다.** 여기서 다시 구현하면
+    같은 경로에 대해 CLI와 GUI의 판단이 갈린다 — 실제로 갈렸다. GUI는 처음부터
+    디렉토리를 받았는데 CLI는 받지 못해, 사용자가 GUI에서 보던 그 경로를 CLI에
+    그대로 붙여 넣으면 "아직 분석 안 됨"이라는 답이 돌아왔다."""
+    try:
+        video, out_dir = manifest.resolve_target(path)
+    except CliError as e:
+        raise _die(e) from e
+    # 비디오로 지목했을 때도 형식을 대조한다 — resolve_target이 state.json을 읽는
+    # 것은 디렉토리로 지목한 경우뿐이라, 이쪽을 빼면 코어가 거부하는 디렉토리를
+    # 여는 우회로가 하나 남는다. 아직 분석하지 않았으면 state.json이 없어 그대로 통과한다.
     _state(out_dir)
-    return path, out_dir
+    return video, out_dir
 
 
 def main(argv: list[str] | None = None) -> int:

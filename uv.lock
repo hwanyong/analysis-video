@@ -21,7 +21,7 @@ dev = [
 
 [[package]]
 name = "analysis-video"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "packages/core" }
 dependencies = [
     { name = "av" },
@@ -79,7 +79,7 @@ dev = [{ name = "analysis-video", extras = ["stt", "stt-fwhisper", "viz"], edita
 
 [[package]]
 name = "analysis-video-gui"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "packages/gui" }
 dependencies = [
     { name = "analysis-video" },

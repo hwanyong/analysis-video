@@ -1,6 +1,6 @@
 [project]
 name = "analysis-video"
-version = "0.1.0"
+version = "0.1.1"
 # 이 한 줄이 PyPI 검색 결과에 그대로 노출된다 — 국제 색인이므로 영어로 쓴다.
 description = "Turn lecture and screencast video into AI-readable context: keyframes, timestamps, and transcript in one Markdown file"
 readme = "README.md"

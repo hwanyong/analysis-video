@@ -246,7 +246,9 @@ threshold changes the documentation with it.
   module is gone; an absent optional backend is reported as a capability, not a fault
 - **paths** — always absolute. Call from any working directory, pass `<video>` as a
   relative path; neither the output nor `state.json` records where you ran it, so a run
-  started in one folder resumes from another.
+  started in one folder resumes from another. `<video>` also accepts the `.analysis`
+  directory of a run you already have, which is the path you are holding once the
+  outputs exist.
 - **resume** — cut off by a timeout? Call the same command again; completed stages are
   skipped. Two exceptions, both below: a directory from an older version does not resume
   at all, and rewriting the transcript sends `frames` back to incomplete.
@@ -291,7 +293,7 @@ against each other ("Language in, language out").
 
 | | Source | If it can't be used |
 |---|---|---|
-1 | `--transcript FILE` — an `.srt` / `.vtt` / `.smi` file you name | **stops**: `transcript-not-found` or `transcript-rejected`, exit 2 |
+1 | `--transcript FILE` — an `.srt` / `.vtt` / `.smi` file you name | **stops** when the file yields nothing to use: `transcript-not-found` or `transcript-rejected`, exit 2 |
 2 | **the subtitles the video already has** — every sidecar beside it (`lecture.ko.srt`, `lecture.srt`, `lecture.mp4.srt`) *and* every text track `split` demuxed to `<video>.analysis/subs/track<n>.srt`, ranked as **one** list | records the reason, opens the next candidate; falls through only when all are spent |
 3 | **Whisper**, decoding the original video's audio directly — no intermediate file (no audio stream at all → empty transcript). **Needs the `[stt]` extra** | `stt-backend-missing` / `stt-model-unavailable`, exit 4 |
 
@@ -313,6 +315,12 @@ Machine captions are refused on purpose: re-using another engine's speech recogn
 strictly worse than running Whisper, where you choose the model and the output records
 which engine produced it. Embedded tracks are filtered before that — bitmap subtitles
 (PGS, VobSub) carry no text, and tracks the container flags `forced` are never extracted.
+
+Those four belong to rung 2, where the tool is choosing among candidates it found for
+itself. **Naming a file is that choice already made**, so `--transcript` uses the file even
+when a rule would have refused it — the finding is kept in `source.notes` and warned about
+on stderr instead. Use that to take a partial forced track on purpose. Rung 1 still stops
+for a file with nothing usable in it: missing, unreadable, or holding no cues.
 
 **What gets recorded.** `transcript.json` gains a `source` object on every path, Whisper
 included: `kind` (`explicit` · `sidecar` · `embedded` · `whisper` · `none`), `path`,

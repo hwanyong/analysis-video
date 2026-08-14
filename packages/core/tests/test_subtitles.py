@@ -398,7 +398,7 @@ def test_result_from_file_reports_why_it_refused(tmp_path):
     멈춰야 하는데, 그 분기는 사다리를 아는 호출자의 몫이다."""
     path = tmp_path / "lecture.ko.srt"
     path.write_text(_srt(n=2), encoding="utf-8")
-    result, notes = sub.result_from_file(path, duration=60.0, kind="explicit")
+    result, notes = sub.result_from_file(path, duration=60.0, kind="sidecar")
     assert result is None
     assert len(notes) == 1 and "큐가 2개" in notes[0]
 
@@ -406,6 +406,43 @@ def test_result_from_file_reports_why_it_refused(tmp_path):
     other.write_text("[Script Info]", encoding="utf-8")
     result, notes = sub.result_from_file(other, duration=60.0, kind="explicit")
     assert result is None and ".ass" in notes[0]
+
+
+# ─── 지목한 자막: 판정을 거부에서 신고로 ────────────────────────────────
+def test_named_file_is_used_even_when_the_quality_checks_would_refuse(tmp_path):
+    """--transcript로 지목한 파일은 품질 검사에 걸려도 쓴다.
+
+    그 검사들은 도구가 스스로 찾아낸 후보 여럿에서 고르기 위한 것이다. 사용자가
+    파일을 짚은 순간 고르는 일은 끝났고, 남은 것은 정보뿐이다. 0.1.0에서는
+    커버리지 11%짜리 강제 자막을 지목해도 거부됐고 안내가 제시한 두 대안은
+    **둘 다 그 파일을 쓰지 않아서**, 알고도 쓰겠다는 통로가 없었다."""
+    path = tmp_path / "lecture.ko.srt"
+    # 60초 영상에 6초만 덮는 자막 = 커버리지 0.1 → 강제 자막으로 의심되는 구간
+    path.write_text(_srt(n=6, step=1.0, length=1.0), encoding="utf-8")
+
+    refused, why = sub.result_from_file(path, duration=60.0, kind="sidecar")
+    assert refused is None, "자동 탐색에서는 그대로 거부되어야 한다"
+    assert "덮습니다" in why[0]
+
+    used, notes = sub.result_from_file(path, duration=60.0, kind="explicit",
+                                       enforce_quality=False)
+    assert used is not None
+    assert len(used["segments"]) == 6
+    # 사유는 버려지지 않는다 — 산출물만 보고도 어떤 자막이었는지 알 수 있어야 한다
+    waived = [n for n in notes if n.startswith(sub.WAIVED)]
+    assert len(waived) == 1 and "덮습니다" in waived[0]
+    assert used["source"]["notes"] == notes
+
+
+def test_named_file_with_no_cues_is_still_refused(tmp_path):
+    """품질이 아니라 '쓸 것이 없다'는 사실 — 통과시키면 빈 전사가 자막인 척 남는다."""
+    path = tmp_path / "empty.ko.srt"
+    path.write_text("", encoding="utf-8")
+
+    result, notes = sub.result_from_file(path, duration=60.0, kind="explicit",
+                                         enforce_quality=False)
+    assert result is None
+    assert any("대사가 하나도 없어" in n for n in notes), notes
 
 
 def test_result_carries_the_encoding_and_parser_notes(tmp_path):

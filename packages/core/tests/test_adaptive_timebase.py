@@ -6,6 +6,8 @@ scenedetect의 get_seconds()는 프레임번호÷선언fps라 그 오차가 시�
 어긋났고, 영상 길이를 넘는 후보가 조용히 클램프돼 엉뚱한 장면이 캡처됐다.
 """
 import json
+import os
+import sys
 
 import pytest
 
@@ -61,3 +63,29 @@ def test_v1_adaptive_cache_is_rejected(monkeypatch, tmp_path):
     stored = json.loads((out / "detect_adaptive.json").read_text())
     assert stored["schema"] == frames_mod.ADAPTIVE_SCHEMA
     assert frames_mod._cached_adaptive(tmp_path / "v.mkv", out, 100.0, [0.0, 1.0]) == entries
+
+
+# ─── cv2 적재 소음 ───────────────────────────────────────────────────────
+DUP_CLASS = (
+    "objc[123]: Class AVFAudioReceiver is implemented in both "
+    "/x/av/.dylibs/libavdevice.62.3.102.dylib (0x1) and "
+    "/x/cv2/.dylibs/libavdevice.61.3.100.dylib (0x2). This may cause spurious "
+    "casting failures and mysterious crashes. One of the duplicates must be "
+    "removed or renamed.")
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="ObjC 런타임이 있는 곳에서만 의미가 있다")
+def test_only_the_known_avdevice_warning_is_filtered(capfd):
+    """상류 휠 두 개가 각자 FFmpeg를 동봉해 나는 경고다 — 우리가 뺄 수 있는
+    사본이 없고 쓰지도 않는 기능이라 영향이 없다. 통째로 묻으면 같은 적재
+    과정의 진짜 오류까지 사라지므로, 걸러 내는 것은 이 한 줄뿐이어야 한다."""
+    with adaptive._without_avdevice_noise():
+        # ObjC 런타임처럼 fd 2에 직접 쓴다 — sys.stderr 교체로는 잡히지 않는 경로다
+        os.write(2, (DUP_CLASS + "\n").encode())
+        os.write(2, b"objc[123]: Class Foo is implemented in both /a and /b.\n")
+        os.write(2, "dlopen 실패: libssl.dylib\n".encode())
+
+    err = capfd.readouterr().err
+    assert "libavdevice" not in err, "알려진 경고는 사용자에게 보이지 않아야 한다"
+    assert "Class Foo" in err, "다른 중복 클래스 경고까지 삼키면 안 된다"
+    assert "dlopen 실패" in err, "적재 실패는 그대로 보여야 한다"

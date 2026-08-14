@@ -62,6 +62,11 @@ MIN_COVERAGE = 0.30
 # 롤업이라 1.0에 가깝고(앞 큐를 통째로 물고 자란다), 사람이 적은 자막에서
 # 우연히 걸리는 것은 반복 대사·후렴뿐이라 드물다. 사이를 넉넉히 벌려 잡는다.
 MAX_ROLLUP = 0.30
+
+# 위 임계들이 걸렸지만 **사용자가 그 파일을 지목했기 때문에** 그대로 쓴 경우의
+# 메모 머리말. 검사를 없앤 것이 아니라 판정을 거부에서 신고로 낮춘 것이라,
+# 사유는 산출물(transcript.json의 source.notes)에 그대로 남는다.
+WAIVED = "지정한 자막이라 그대로 씁니다 — 자동 탐색이었다면 거부됐을 사유: "
 # 자막 끝이 영상 길이의 이 배수(+ 아래 여유)를 넘으면 다른 영상의 자막으로 본다.
 # 컨테이너 길이와 자막 제작 기준(무편집본)이 조금 어긋나는 것은 흔하므로 배수로,
 # 짧은 영상에서 배수만으로는 여유가 0에 수렴하므로 절대 여유도 함께 준다.
@@ -623,7 +628,8 @@ def embedded_candidates(tracks: list[dict]) -> tuple[list[Candidate], list[str]]
 # ─── 결과 조립 ───────────────────────────────────────────────────────────
 def result_from_cues(cues: list[Cue], duration: float, *, kind: str, fmt: str,
                      path: Path | None = None, track: int | None = None,
-                     language: str | None = None, notes: list[str] | None = None
+                     language: str | None = None, notes: list[str] | None = None,
+                     enforce_quality: bool = True
                      ) -> tuple[dict | None, list[str]]:
     """검증을 통과하면 transcript.json 본체, 아니면 (None, 사유가 담긴 메모).
 
@@ -631,13 +637,29 @@ def result_from_cues(cues: list[Cue], duration: float, *, kind: str, fmt: str,
     조용히 넘어가면 안 되고 사이드카·내장 트랙은 넘어가야 하는데, 그 분기는
     사다리를 아는 호출자(cli.run_transcribe)의 몫이다.
 
+    enforce_quality=False는 evaluate의 판정을 **거부에서 신고로 낮춘다**. 그 검사들은
+    도구가 스스로 찾아낸 후보 여럿 중에서 고르기 위한 것이다 — 사용자가 파일을
+    지목한 순간 고르는 일은 이미 끝났고, 남은 것은 "이 파일이 어떤 자막인가"라는
+    정보뿐이다. 실제로 커버리지 11%짜리 강제 자막을 --transcript로 지목해도
+    거부됐고, 힌트가 안내한 두 대안(자동 탐색·--no-subtitles)은 **둘 다 그 파일을
+    쓰지 않아서** 알고도 쓰겠다는 통로가 아예 없었다.
+
+    단 큐가 하나도 없으면 이 값과 무관하게 거부한다 — 그것은 품질 판정이 아니라
+    쓸 것이 없다는 사실이고, 통과시키면 빈 전사가 자막인 척 기록된다.
+
     words는 언제나 빈 배열이다. 자막의 시각은 큐 단위로 사람이 맞춘 것이라
     단어 단위로 쪼갤 근거가 없고, 억지로 나누면 있지도 않은 정밀도를 꾸며낸다."""
     notes = list(notes or [])
     report = evaluate(cues, duration)
     if not report.ok:
-        notes.append(report.reason)
-        return None, notes
+        if enforce_quality:
+            notes.append(report.reason)
+            return None, notes
+        if not cues:
+            notes.append(f"{report.reason} — 대사가 하나도 없어 이 파일로는 "
+                         "전사를 만들 수 없습니다")
+            return None, notes
+        notes.append(WAIVED + report.reason)
 
     segments = [{"start": round(c.start, 3), "end": round(c.end, 3), "text": c.text}
                 for c in cues]
@@ -652,8 +674,8 @@ def result_from_cues(cues: list[Cue], duration: float, *, kind: str, fmt: str,
     return result, notes
 
 
-def result_from_file(path: Path, duration: float, *, kind: str
-                     ) -> tuple[dict | None, list[str]]:
+def result_from_file(path: Path, duration: float, *, kind: str,
+                     enforce_quality: bool = True) -> tuple[dict | None, list[str]]:
     """자막 파일 하나를 읽어 전사 결과로 만든다 — 사다리의 세 자막 단계
     (--transcript·사이드카·split이 뽑아 둔 내장 트랙)가 공유하는 진입점이다.
 
@@ -676,4 +698,5 @@ def result_from_file(path: Path, duration: float, *, kind: str
     notes = [] if encoding.startswith("utf-8") else [f"{encoding} 인코딩으로 읽었습니다"]
     cues, parse_notes = parse(text, fmt)
     return result_from_cues(cues, duration, kind=kind, fmt=fmt, path=path,
-                            language=language_of(path), notes=notes + parse_notes)
+                            language=language_of(path), notes=notes + parse_notes,
+                            enforce_quality=enforce_quality)

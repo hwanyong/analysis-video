@@ -1,6 +1,6 @@
 [project]
 name = "analysis-video-gui"
-version = "0.1.0"
+version = "0.1.1"
 # 이 한 줄이 PyPI 검색 결과에 그대로 노출된다 — 국제 색인이므로 영어로 쓴다.
 description = "Desktop GUI for reviewing analysis-video output and tuning scene-change detection"
 readme = "README.md"
@@ -36,7 +36,10 @@ dependencies = [
     # 상한 없이 두면 잘못된 코어와 조합될 수 있다.
     # 주의: 이 상한은 uv workspace 안에서는 강제되지 않는다(잠금이 지정자를 버린다) —
     # git+/PyPI 설치에서만 효력이 있다.
-    "analysis-video>=0.1,<0.2",
+    # 하한이 0.1.1인 이유: app._resolve가 manifest.resolve_target에 위임한다.
+    # 0.1.0에는 그 함수가 없어, 하한을 0.1로 두면 낡은 코어와 짝지어진 GUI가
+    # 기동 첫 줄에서 AttributeError로 죽는다.
+    "analysis-video>=0.1.1,<0.2",
     # PySide6(껍데기 패키지)가 아니라 Essentials 를 직접 지정한다.
     # PySide6 = pyside6-essentials + pyside6-addons 인데, 우리가 import 하는 Qt 모듈은
     # QtCore·QtGui·QtWidgets 셋뿐이고 전부 essentials 소유다. addons(설치 후 884MB)는

@@ -11,17 +11,63 @@ AdaptiveDetector는 자체 전환추적이 없어 트리거 직후가 과도기(
 이 배열은 신호 측정이 이미 만들어 둔 것(time_series)이라 추가 디코드가 없고,
 PTS가 원천이므로 VFR에도 옳다. `media.py`의 "인덱스/평균fps 근사 금지" 규약과 같다.
 """
+import contextlib
+import os
+import re
+import sys
+import tempfile
 from collections.abc import Sequence
 from pathlib import Path
 
 from .. import media
 
+# macOS에서 cv2를 적재할 때 ObjC 런타임이 fd 2로 직접 뱉는 중복 클래스 경고.
+# 원인은 상류 휠 두 개가 각자 FFmpeg를 동봉한 것이다: av(libavdevice.62)와
+# opencv-python-headless(libavdevice.61)가 같은 AVFoundation 캡처 클래스를
+# 각자 등록한다. 두 사본 중 어느 쪽도 우리가 뺄 수 없고(둘 다 무조건 의존이며
+# 각 휠 안에 박혀 있다), 우리는 avdevice의 캡처 기능을 쓰지 않으므로 실제
+# 영향은 없다 — 남는 것은 "mysterious crashes"라 겁을 주는 문구뿐이다.
+#
+# 그래서 **이 한 줄만** 걸러 내고 나머지 stderr는 그대로 통과시킨다. 통째로
+# 묻으면 같은 적재 과정에서 나는 진짜 오류(다른 dylib 실패)까지 사라진다.
+_OBJC_DUP_AVDEVICE = re.compile(
+    r"^objc\[\d+\]: Class AVF\w+ is implemented in both .*libavdevice")
+
+
+@contextlib.contextmanager
+def _without_avdevice_noise():
+    """cv2 적재 구간의 fd 2를 받아 두었다가, 알려진 경고만 빼고 되돌려 준다.
+
+    파이썬의 sys.stderr를 바꾸는 것으로는 잡히지 않는다 — 저 문구는 ObjC
+    런타임이 파일 서술자 2에 직접 쓰는 것이라 프로세스 수준에서 갈아 끼워야 한다.
+    파이프가 아니라 임시 파일을 쓰는 이유는 버퍼가 차면 교착이 나기 때문이다."""
+    if sys.platform != "darwin":
+        yield
+        return
+    sys.stderr.flush()
+    saved = os.dup(2)
+    try:
+        with tempfile.TemporaryFile() as sink:
+            os.dup2(sink.fileno(), 2)
+            try:
+                yield
+            finally:
+                os.dup2(saved, 2)
+                sink.seek(0)
+                text = sink.read().decode("utf-8", errors="replace")
+        for line in text.splitlines():
+            if not _OBJC_DUP_AVDEVICE.match(line):
+                print(line, file=sys.stderr)
+    finally:
+        os.close(saved)
+
 
 def adaptive_detector_frames(video_path: Path, threshold: float = 2.0) -> list[int]:
     """장면 전환 후보의 **프레임 번호** 목록 (첫 강제 경계 0은 제외)."""
     # 지연 임포트: scenedetect(→cv2)가 깨져 있어도 doctor 등 다른 명령은 살아야 한다
-    from scenedetect import SceneManager, open_video
-    from scenedetect.detectors import AdaptiveDetector
+    with _without_avdevice_noise():
+        from scenedetect import SceneManager, open_video
+        from scenedetect.detectors import AdaptiveDetector
 
     video = open_video(str(video_path))
     sm = SceneManager()

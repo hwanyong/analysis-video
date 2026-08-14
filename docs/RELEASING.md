@@ -62,8 +62,9 @@ uv run analysis-video analyze docs/media/demo-pipeline.mp4 --out "$(mktemp -d)/d
 TMP=$(mktemp -d) && cp -R "$DIR" "$TMP/pkg" && cd "$TMP"
 test ! -e "$TMP/pyproject.toml"     # 워크스페이스 루트를 딸려 보내지 않았는지
 
-# GUI를 점검할 때만: 코어가 아직 PyPI에 없으면 analysis-video>=0.1,<0.2 를 못 찾아
-# 모든 조합이 FAIL 한다. 코어를 먼저 만들어 지역 색인으로 넘긴다(install-smoke.yml 과 같은 방식).
+# GUI를 점검할 때만: GUI가 요구하는 코어 버전이 아직 PyPI에 없으면(같은 릴리스에서
+# 코어도 올리는 경우가 그렇다) 해석이 실패해 모든 조합이 FAIL 한다.
+# 코어를 먼저 만들어 지역 색인으로 넘긴다(install-smoke.yml 과 같은 방식).
 [ "$DIR" = packages/gui ] && \
   (cd "$OLDPWD" && uv build --package analysis-video --out-dir "$TMP/idx") && \
   FIND="--find-links $TMP/idx" || FIND=""
