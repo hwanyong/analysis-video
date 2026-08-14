@@ -3,12 +3,15 @@ import gc
 import weakref
 
 from PySide6.QtCore import QPoint, Qt
-from PySide6.QtGui import QKeyEvent
+from PySide6.QtGui import QInputMethodQueryEvent, QKeyEvent
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QWidget
 
 from analysis_video_gui.flags import compare_metrics
-from analysis_video_gui.session import REGISTRY, Session
+from analysis_video_gui.i18n import tr
+from analysis_video_gui.session import REGISTRY, Session, mark_label
+from analysis_video_gui.shortcuts import _EDIT_WIDGETS
+from analysis_video_gui.windows.hub import HubWindow
 
 ALL_WINDOWS = [wid for wid, _ in REGISTRY]
 
@@ -54,6 +57,16 @@ def _send(app, target, key, mods=Qt.KeyboardModifier.NoModifier):
     app.processEvents()
 
 
+def _hangul(key, mods=Qt.KeyboardModifier.NoModifier, type_=QKeyEvent.Type.KeyPress):
+    """한글 입력원에서 `key` 자리를 누른 이벤트 — 문자는 자모로 온다."""
+    from analysis_video_gui.keys import NATIVE_FIELD, NATIVE_KEYCODES
+
+    code = next(c for c, k in NATIVE_KEYCODES.items() if k == key)
+    scan = code if NATIVE_FIELD == "nativeScanCode" else 0
+    virt = code if NATIVE_FIELD == "nativeVirtualKey" else 0
+    return QKeyEvent(type_, 0x314F, mods, scan, virt, 0, "ㅏ", False, 1)
+
+
 def test_all_windows_open_and_sync(analyzed, qapp, pump):
     video, out_dir = analyzed
     session = Session(video, out_dir)
@@ -67,6 +80,79 @@ def test_all_windows_open_and_sync(analyzed, qapp, pump):
         session.engine.seek(target)
         pump(1.0)
         assert session.windows["frame_sync"]._idx == session.store.frame_index_at(target)
+    finally:
+        session.engine.shutdown()
+
+
+def test_hub_is_neither_globally_topmost_nor_a_tool_window(analyzed, qapp):
+    """허브의 "위"는 이 앱 안에서만이다 — 전역 최상위·Tool 창으로 되돌아가지 못하게 막는다.
+
+    `WindowStaysOnTopHint`는 이 앱이 비활성일 때도 브라우저·에디터 위에 남고,
+    `Qt.Tool`은 macOS에서 NSPanel이 되어 앱 비활성 시 통째로 숨거나(기본) 숨김을
+    끄면 다른 앱 위로 뜬다. 둘 다 눈으로 보기 전에는 티가 안 나는 회귀라 플래그
+    자체를 못박는다."""
+    video, out_dir = analyzed
+    session = Session(video, out_dir)
+    try:
+        flags = HubWindow(session).windowFlags()
+        assert not (flags & Qt.WindowType.WindowStaysOnTopHint), \
+            "전역 최상위는 다른 앱 위로도 뜬다"
+        assert int(flags & Qt.WindowType.WindowType_Mask) == int(Qt.WindowType.Window), \
+            "허브는 평범한 최상위 창이어야 한다(Tool/Dialog 아님)"
+    finally:
+        session.engine.shutdown()
+
+
+def test_hub_rides_above_siblings_without_taking_focus(analyzed, qapp, pump):
+    """허브는 형제 창이 앞으로 나올 때마다 따라 올라오되 포커스는 건드리지 않는다.
+
+    `raise_`/`activateWindow`를 가로채 확인한다 — 오프스크린에서는 실제 창 순서를
+    볼 수 없고, 여기서 못박을 것은 "언제 올리고 언제 올리지 않는가"라는 판단
+    자체이기 때문이다. 실제로 위에 뜨는지는 사람이 눈으로 확인할 몫."""
+    video, out_dir = analyzed
+    session = Session(video, out_dir)
+    hub = HubWindow(session)
+    hub.show()
+    pump(0.3)
+    raised, activated = [], []
+    hub.raise_ = lambda: raised.append("raise")
+    hub.activateWindow = lambda: activated.append("activate")
+    try:
+        player = session.open_window("player")
+        pump(0.5)
+        assert raised, "창이 새로 열리면 허브가 그 위로 올라와야 한다"
+
+        raised.clear()
+        qapp.focusWindowChanged.emit(player.windowHandle())
+        assert raised == ["raise"], "형제 창이 포커스를 잡으면 허브가 올라온다"
+        assert not activated, "포커스를 훔치면 스크럽·타이핑 도중 창을 못 쓴다"
+
+        # 포커스가 다른 앱으로 넘어감(None) — 여기서 올리면 브라우저 위로 튀어나온다
+        raised.clear()
+        qapp.focusWindowChanged.emit(None)
+        assert not raised, "다른 앱으로 나갈 때 올리면 시스템 전역 최상위와 같아진다"
+
+        # 허브 자신 → 다시 올리지 않는다. 재진입(올림 → 포커스 변화 → 올림)이
+        # 성립하지 않는다는 뜻이라 별도의 재귀 방지 장치가 필요 없다.
+        qapp.focusWindowChanged.emit(hub.windowHandle())
+        assert not raised
+
+        # 세션 장부에 없는 창 = 모달 도움말·콤보박스 팝업 — 덮으면 안 된다
+        stranger = QWidget()
+        stranger.show()
+        pump(0.2)
+        qapp.focusWindowChanged.emit(stranger.windowHandle())
+        assert not raised, "앱 모달을 덮으면 클릭이 막혀 아무것도 못 하게 된다"
+        stranger.close()
+
+        # 닫힌 허브에 앱 수명 시그널이 계속 배달되면 파괴된 위젯을 건드리게 된다.
+        # shutdown은 대역으로 둔다 — 여기서 QApplication.quit()이 돌면 테스트
+        # 프로세스가 공유하는 앱 객체가 끝난다.
+        session.shutdown = lambda: None
+        hub.close()
+        raised.clear()
+        qapp.focusWindowChanged.emit(player.windowHandle())
+        assert not raised, "닫힌 허브가 포커스 변경을 계속 받으면 안 된다"
     finally:
         session.engine.shutdown()
 
@@ -158,7 +244,7 @@ def test_global_shortcuts(analyzed, qapp, pump):
         _send(qapp, target, Qt.Key.Key_Space)
         assert not session.engine.playing
 
-        # Shift+구두점은 Key_Less/Key_Greater로 전달된다
+        # Shift+구두점은 Key_Less/Key_Greater로 전달된다 — 대표 키로 접혀야 한다
         base = session.engine.rate
         _send(qapp, target, Qt.Key.Key_Greater, Qt.KeyboardModifier.ShiftModifier)
         assert session.engine.rate > base
@@ -177,6 +263,122 @@ def test_global_shortcuts(analyzed, qapp, pump):
         _send(qapp, target, Qt.Key.Key_N)
         pump(0.3)
         assert session.engine.position() > 0.0
+    finally:
+        session.engine.shutdown()
+
+
+def test_shortcuts_survive_a_hangul_input_source(analyzed, qapp, pump):
+    """입력원이 한글이어도 **같은 자리는 같은 동작**이어야 한다.
+
+    한글 입력에서 K를 누르면 OS는 Key_K가 아니라 자모('ㅏ')를 실어 보낸다.
+    문자로 비교하던 예전 라우터는 영문 입력일 때만 동작했다 — 사용자가 글을
+    쓰다 돌아오면 단축키가 통째로 죽는, 눈에 잘 안 띄는 회귀다.
+    """
+    video, out_dir = analyzed
+    session = Session(video, out_dir)
+    try:
+        session.open_window("timeline")
+        pump(0.8)
+        tl = session.windows["timeline"]
+
+        qapp.sendEvent(tl, _hangul(Qt.Key.Key_K))
+        qapp.processEvents()
+        assert session.engine.playing, "한글 입력에서도 K는 재생/정지여야 한다"
+        qapp.sendEvent(tl, _hangul(Qt.Key.Key_K))
+        qapp.processEvents()
+        assert not session.engine.playing
+
+        base = session.engine.rate
+        qapp.sendEvent(tl, _hangul(Qt.Key.Key_Period,
+                                   Qt.KeyboardModifier.ShiftModifier))
+        qapp.processEvents()
+        assert session.engine.rate > base, "⇧.(배속 올림)이 한글에서 죽었다"
+
+        session.engine.seek(0.0)
+        pump(0.4)
+        qapp.sendEvent(tl, _hangul(Qt.Key.Key_N))
+        pump(0.3)
+        assert session.engine.position() > 0.0, "N(다음 채택 프레임)이 한글에서 죽었다"
+
+        # 창 문맥 전용 키(도구 전환)도 같은 규칙을 따른다
+        assert tl.handle_shortcut(_hangul(Qt.Key.Key_Z))
+        assert tl.effective_tool() == "zoom"
+        assert tl.handle_shortcut(_hangul(Qt.Key.Key_V))
+        assert tl.effective_tool() == "scrub"
+    finally:
+        session.engine.shutdown()
+
+
+def test_help_needs_shift_because_it_is_documented_as_question_mark(analyzed, qapp, pump):
+    """도움말은 ⇧/(=?)에서만 열린다 — 맨 `/`는 가로채지도 않는다.
+
+    `?`는 Shift 변형이라 라우터 안에서 대표 키 `/`로 접힌다. 접은 뒤 Shift를
+    다시 요구하지 않으면 맨 `/`에도 모달이 뜬다. 실제로 여는 대신 호출 여부만
+    본다 — `show_shortcut_help`는 `QMessageBox.exec()`로 막힌다.
+    """
+    video, out_dir = analyzed
+    session = Session(video, out_dir)
+    try:
+        session.open_window("timeline")
+        pump(0.6)
+        target = session.windows["timeline"]
+
+        calls = []
+        session.show_shortcut_help = lambda: calls.append(1)
+
+        _send(qapp, target, Qt.Key.Key_Slash)
+        assert not calls, "맨 /로는 열리지 않아야 한다"
+
+        _send(qapp, target, Qt.Key.Key_Question, Qt.KeyboardModifier.ShiftModifier)
+        assert len(calls) == 1, "⇧/(=?)로는 열려야 한다"
+
+        # 한글 입력이어도 마찬가지 — `/`는 자리로, Shift는 수식키로 판정된다
+        qapp.sendEvent(target, _hangul(Qt.Key.Key_Slash,
+                                       Qt.KeyboardModifier.ShiftModifier))
+        qapp.processEvents()
+        assert len(calls) == 2
+    finally:
+        session.engine.shutdown()
+
+
+def test_only_text_inputs_keep_the_input_method_on(analyzed, qapp, pump):
+    """텍스트 입력 위젯이 아니면 입력기가 꺼져 있어야 한다.
+
+    macOS는 포커스 위젯이 `WA_InputMethodEnabled`이면 키를 IME에 먼저 넘기고,
+    한글 IME는 자모 조합을 시작하며 그것을 삼킨다 — 전역 단축키 라우터는
+    이벤트를 **아예 못 받는다**. 자리 기준 판정(`physical_key`)으로는 못 고치는
+    경로다.
+
+    지금 쓰는 위젯들은 이 조건을 저절로 만족한다(QListWidget·QTableWidget은
+    입력기를 켜지 않는다). 보장이 아니라 우연이라 여기서 못박는다 — 맨
+    QListView나 QTextBrowser를 하나 넣으면 그 창에 포커스가 있는 동안만
+    단축키가 죽는, 재현 조건이 까다로운 회귀가 생긴다.
+    """
+    video, out_dir = analyzed
+    session = Session(video, out_dir)
+    try:
+        for wid in ALL_WINDOWS:
+            session.open_window(wid)
+        pump(1.0)
+
+        # 이 세션의 창들만 본다 — allWidgets()는 앱 전역이라 앞 테스트가 남긴
+        # 위젯(콤보 팝업 등)까지 딸려 오고, 팝업은 애초에 라우터가 양보한다.
+        mine = {w.window() for w in session.windows.values()}
+        q = Qt.InputMethodQuery.ImEnabled | Qt.InputMethodQuery.ImHints
+        offenders = set()
+        for w in qapp.allWidgets():
+            if w.window() not in mine or isinstance(w, _EDIT_WIDGETS):
+                continue
+            if not w.testAttribute(Qt.WidgetAttribute.WA_InputMethodEnabled):
+                continue
+            if w.focusPolicy() == Qt.FocusPolicy.NoFocus:
+                continue          # 포커스를 못 잡으면 IME로 갈 일도 없다
+            ev = QInputMethodQueryEvent(q)   # qnsview가 IME 위임을 정할 때와 같은 질의
+            qapp.sendEvent(w, ev)
+            if ev.value(Qt.InputMethodQuery.ImEnabled):
+                offenders.add(f"{type(w).__name__} in {type(w.window()).__name__}")
+        assert not offenders, \
+            f"입력기를 켜 둔 비-입력 위젯: {sorted(offenders)} — 한글에서 단축키가 먹힌다"
     finally:
         session.engine.shutdown()
 
@@ -429,29 +631,40 @@ def test_playhead_label_follows_programmatic_seek(analyzed, qapp, pump):
         session.engine.shutdown()
 
 
+def _flag_box_text(count: int, extra_key: str | None) -> str:
+    return tr("timeline.kind_item", glyph="▲", label=mark_label("flag"), count=count,
+              extra=tr(extra_key) if extra_key else "")
+
+
 def test_timeline_legend_reports_counts(analyzed, qapp, pump):
-    """비어 있는 레인이 '0건'인지 '숨김'인지 범례에서 구분되어야 한다."""
+    """비어 있는 레인이 '0건'인지 '숨김'인지 범례에서 구분되어야 한다.
+
+    단언을 카탈로그로 조립하는 이유: 여기서 보는 것은 개수와 숨김 상태가 드러나는가
+    이지 그것이 한국어인가가 아니다. 문구를 박아 두면 번역만 손봐도 테스트가 깨진다."""
     video, out_dir = analyzed
     session = Session(video, out_dir)
     try:
         session.open_window("timeline")
         pump(0.6)
         tl = session.windows["timeline"]
-        assert f"프레임 채택 {len(session.store.frames)}" in tl._legend_head.text()
+        assert tr("timeline.legend_frames", count=len(session.store.frames)) \
+            in tl._legend_head.text()
         assert tl._kind_boxes["rejected"].text().endswith(
             str(len(session.store.rejected))), "기본은 표시 상태(숨김 표기 없음)"
-        assert tl._kind_boxes["flag"].text().startswith("▲ GT 플래그 0")
+        assert tl._kind_boxes["flag"].text() == \
+            _flag_box_text(0, "timeline.kind_need_flag")
 
         session.toggle_rejected()
         pump(0.2)
-        assert "숨김" in tl._kind_boxes["rejected"].text(), "숨긴 상태가 드러나야 한다"
+        assert tr("timeline.kind_hidden") in tl._kind_boxes["rejected"].text(), \
+            "숨긴 상태가 드러나야 한다"
 
         session.flags.toggle(2.0)
         pump(0.2)
-        assert "GT 플래그 1" in tl._kind_boxes["flag"].text()
+        assert tl._kind_boxes["flag"].text() == _flag_box_text(1, None)
 
         # 체크박스가 곧 순회 필터
-        assert not tl._kind_boxes["segment"].isChecked(), "STT는 581건이라 기본 제외"
+        assert not tl._kind_boxes["segment"].isChecked(), "STT는 수백 건이라 기본 제외"
         tl._kind_boxes["segment"].setChecked(True)
         pump(0.2)
         assert "segment" in session.traverse

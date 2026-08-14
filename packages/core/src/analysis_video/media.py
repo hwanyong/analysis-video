@@ -63,14 +63,32 @@ def _frame_at(container: av.container.InputContainer, time_s: float) -> av.Video
     return last  # time_s가 영상 끝을 살짝 넘은 경우 마지막 프레임으로 대응
 
 
-def extract_frame(path: Path, time_s: float, out_path: Path, quality: int = 90) -> bool:
-    """고해상도 저장 — 검출은 저해상도로 하되 산출 이미지는 원본 해상도(결정 A6)."""
+def extract_frame(path: Path, time_s: float, out_path: Path, quality: int = 90,
+                  reduced: tuple[Path, int] | None = None) -> tuple[int, int] | None:
+    """고해상도 저장 — 검출은 저해상도로 하되 산출 이미지는 원본 해상도로 낸다.
+
+    reduced=(경로, 긴 변)을 주면 읽기용 축소 사본을 **같은 디코드에서** 함께 쓴다.
+    저장된 JPEG를 다시 열어 줄이면 손실이 두 번 얹히고 seek·디코드가 한 번 더
+    돈다 — 둘 다 이 자리에서만 피할 수 있다.
+
+    반환은 축소 사본의 (가로, 세로)다. 실패하면 None — 호출부가 그것으로
+    추출 실패를 판정한다. 사본을 요청하지 않았으면 원본 크기를 돌려준다."""
+    from . import budget
     with av.open(str(path)) as c:
         frame = _frame_at(c, time_s)
         if frame is None:
-            return False
-        frame.to_image().save(str(out_path), quality=quality)
-    return out_path.exists()
+            return None
+        img = frame.to_image()
+        img.save(str(out_path), quality=quality)
+        if reduced is None:
+            return img.size
+        dst, long_edge = reduced
+        size = budget.reduced_size(img.width, img.height, long_edge)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        # LANCZOS — 축소에서 글자 획이 가장 덜 뭉갠다. 본문 가독성이 이 사본의
+        # 존재 이유라 리샘플러가 판단 대상이다.
+        img.resize(size, Image.LANCZOS).save(str(dst), quality=quality)
+    return size if out_path.exists() else None
 
 
 def extract_gray_array(path: Path, time_s: float, w: int = 200, h: int = 112) -> np.ndarray | None:

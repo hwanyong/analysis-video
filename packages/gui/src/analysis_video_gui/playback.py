@@ -1,7 +1,7 @@
 """M0 재생 코어 — PyAV 디코드 + sounddevice 오디오 + 자작 클록/동기.
 
 QtMultimedia 동봉 FFmpeg가 AV1을 디코드하지 못함이 스파이크로 실증되어(0프레임),
-분석 파이프라인과 동일한 PyAV 경로로 재생한다(결정 A9 유지).
+분석 파이프라인과 동일한 PyAV 경로로 재생한다.
 
 구조
   VideoDecodeThread ─┐ (pts, QImage) 큐

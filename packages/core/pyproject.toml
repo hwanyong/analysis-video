@@ -1,29 +1,108 @@
 [project]
 name = "analysis-video"
 version = "0.1.0"
-description = "슬라이드 기반 강의 영상을 AI 소비용 컨텍스트(프레임 이미지 + 대사 타임라인 + 메타데이터 JSON)로 변환하는 에이전트 친화 CLI"
+# 이 한 줄이 PyPI 검색 결과에 그대로 노출된다 — 국제 색인이므로 영어로 쓴다.
+description = "Turn lecture and screencast video into AI-readable context: keyframes, timestamps, and transcript in one Markdown file"
+readme = "README.md"
 requires-python = ">=3.11"
+license = "MIT"
+# 실파일 사본을 이 디렉터리에 둔다 — 심링크는 uv build를 실패시키고,
+# "../LICENSE" 참조는 에러 없이 조용히 License-File 헤더와 본문을 누락시킨다.
+license-files = ["LICENSE"]
+authors = [{ name = "UHD", email = "yoo.hwanyong@gmail.com" }]
+keywords = ["video", "video-analysis", "video-to-text", "video-to-markdown",
+            "lecture", "slides", "screencast", "transcription", "speech-to-text",
+            "whisper", "scene-detection", "keyframe-extraction",
+            "llm", "rag", "ai-agent", "multimodal", "context", "cli", "local-first"]
+# License:: 분류자는 넣지 않는다 — PEP 639의 license 필드와 함께 쓰면 업로드가 거부된다.
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Education",
+    # 문서·agent-guide는 영어, CLI 메시지는 한국어라 둘 다 선언한다.
+    "Natural Language :: English",
+    "Natural Language :: Korean",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Multimedia :: Video",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Text Processing :: Linguistic",
+]
+
 dependencies = [
     "numpy>=1.26",
     "av>=13",
     # 0.7부터 opencv-python(GUI판)이 하드 의존으로 바뀜 — headless extra가 있는 0.6.x 고정.
-    # pip 최종 사용자에게도 headless만 설치되게 하는 유일한 선언적 방법 (결정 A10)
+    # pip 최종 사용자에게도 headless만 설치되게 하는 유일한 선언적 방법이다.
     "scenedetect[opencv-headless]>=0.6.4,<0.7",
     "scikit-image>=0.24",
     "Pillow>=10",
-    # STT 백엔드 — 플랫폼별 자동 선택 (1순위 macOS Apple Silicon = MLX/Metal).
-    # faster-whisper는 휠이 실존하는 조합에만 강제: Intel Mac(onnxruntime x86_64 휠 중단)과
-    # Windows ARM64(ctranslate2 휠 부재)는 설치 실패 대신 doctor(exit 4) 안내로 처리
-    "mlx-whisper>=0.4; sys_platform == 'darwin' and platform_machine == 'arm64'",
-    "faster-whisper>=1.0; sys_platform == 'linux' or (sys_platform == 'win32' and platform_machine != 'ARM64')",
 ]
 
+
+# 주의: 하위 테이블([project.urls] 등)은 [project]의 모든 키 뒤에 와야 한다 —
+# TOML은 테이블을 열면 이후 키를 전부 그 테이블에 넣으므로, 위에 두면
+# dependencies가 urls 안으로 흡수되어 빌드가 실패한다.
+[project.urls]
+Homepage = "https://github.com/hwanyong/analysis-video"
+Repository = "https://github.com/hwanyong/analysis-video"
+Issues = "https://github.com/hwanyong/analysis-video/issues"
+Documentation = "https://github.com/hwanyong/analysis-video/blob/main/packages/core/README.md"
+
 [project.optional-dependencies]
+# STT(음성 인식) 백엔드 — **선택 설치**다. 기본 설치에서 뺀 근거는 실측이다:
+# 이 세 줄이 끌고 오는 스택만 872MB(디스크 1,180MB 중, torch 476MB 포함 —
+# macOS Apple Silicon · Python 3.13 · 빈 가상환경 기준)인데 실사용은 자막 사다리에서
+# 끝나 whisper가 한 번도 돌지 않았다. 자막이 있는 영상은 백엔드 없이 끝까지
+# 분석되므로, 무조건 의존으로 두면 쓰지도 않을 872MB를 모든 사용자가 내려받는다.
+# 필요한 사람만 (uvx의 @latest는 장식이 아니다 — 처음 해석한
+# 버전을 캐시해 계속 쓰므로 붙이지 않으면 옛 버전에 고정된다):
+#   uvx 'analysis-video[stt]@latest' · uv tool install 'analysis-video[stt]' · pip install 'analysis-video[stt]'
+#
+# 플랫폼별 자동 선택 (1순위 macOS Apple Silicon = MLX/Metal).
+# 각 마커는 "휠이 실존하는 조합"만 가리킨다. 조합이 없는 환경(Apple Silicon+3.14)은
+# extra를 지정해도 백엔드 없이 설치만 되고, doctor가 그 능력이 없다고 보고한다 —
+# 해석 실패로 설치를 통째로 막는 것보다 정직하다. 종료코드 4는 그 능력이 실제로
+# 필요해진 순간(자막이 하나도 없어 whisper까지 내려간 전사)에만 난다.
+# Windows ARM64는 사정이 다르다: 여기 STT 마커와 무관하게, 무조건 의존인
+# scenedetect[opencv-headless] → opencv-python-headless 가 win_arm64 휠을 내지 않아
+# (win32·win_amd64 뿐) **설치 자체가 해석 실패한다.** "설치는 되고 백엔드만 없음"이 아니다.
+stt = [
+    #   Apple Silicon 3.14 제외 이유: mlx 최신(0.32)이 cp313까지만 휠을 낸다.
+    #   같은 조합에서 faster-whisper도 불가(onnxruntime cp314 macOS 휠 부재)라 폴백이 없다.
+    "mlx-whisper>=0.4; sys_platform == 'darwin' and platform_machine == 'arm64' and python_full_version < '3.14'",
+    # numba 하한이 필요한 이유: mlx-whisper가 numba를 버전 조건 없이 의존하고, numba 최신은
+    # numpy<2.5를 요구한다. 해석기가 최신 numpy를 택하면 numba를 상한 선언이 없는 2021년
+    # 버전(0.53.1, cp312+ 휠 부재)까지 후퇴시켜 소스 빌드로 넘어가 설치가 실패한다.
+    # 0.62가 아니라 0.63인 이유: arm64 cp314 휠이 0.63.0부터 존재한다.
+    "numba>=0.63; sys_platform == 'darwin' and platform_machine == 'arm64' and python_full_version < '3.14'",
+    # Intel Mac 포함: onnxruntime이 macOS x86_64 휠을 다시 제공해 휠만으로 해석된다
+    # (해석 검증 완료, 전사 실행은 미검증). Apple Silicon은 위 mlx가 담당하므로 제외.
+    # macOS만 3.14를 제외한다 — onnxruntime cp314 휠이 macOS에만 없다. 리눅스·윈도우 3.14는 정상.
+    "faster-whisper>=1.0; sys_platform == 'linux' or (sys_platform == 'darwin' and platform_machine != 'arm64' and python_full_version < '3.14') or (sys_platform == 'win32' and platform_machine != 'ARM64')",
+]
 viz = ["matplotlib>=3.9"]
-# Apple Silicon에서도 faster-whisper 폴백을 강제 설치하고 싶을 때 (교차검증·비교용)
+# Apple Silicon에서도 faster-whisper 폴백을 강제 설치하고 싶을 때 (교차검증·비교용).
+# [stt]와 겹쳐 무의미해지지 않았는가 — 아니다. [stt]의 faster-whisper 줄은 마커로
+# Apple Silicon을 제외하므로(그쪽은 mlx가 담당한다) 이 extra 없이는 Apple Silicon에서
+# faster-whisper를 설치할 방법이 여전히 없다. 다른 플랫폼에서는 [stt]가 이미 같은
+# 패키지를 주므로 중복이지만 무해하고, "이 백엔드를 달라"는 요청이 플랫폼에 따라
+# 되기도 안 되기도 하는 편이 더 나쁘다.
 stt-fwhisper = ["faster-whisper>=1.0"]
-# NVIDIA GPU: 시스템 CUDA 설치 없이 pip만으로 런타임 구성 (드라이버만 필요)
+# NVIDIA GPU: 시스템 CUDA 설치 없이 pip만으로 런타임 구성 (드라이버만 필요).
+# [stt]를 함께 끌어오는 이유: 이 두 휠을 실제로 dlopen하는 것은 faster-whisper
+# 백엔드뿐이라(stt/backend_fwhisper._preload_cuda_libs) STT 없이 [cuda]만 깔면
+# 아무도 열지 않는 라이브러리만 남는다. STT가 무조건 의존이던 시절에는 그 조합이
+# 생길 수 없었지만, extra로 강등한 뒤에는 생긴다.
 cuda = [
+    "analysis-video[stt]",
     "nvidia-cublas-cu12; sys_platform != 'darwin'",
     "nvidia-cudnn-cu12>=9; sys_platform != 'darwin'",
 ]
@@ -32,10 +111,13 @@ cuda = [
 analysis-video = "analysis_video.cli:main"
 
 [dependency-groups]
-dev = [
-    "faster-whisper>=1.0",
-    "matplotlib>=3.9",
-]
+# 개발 환경은 **extra를 전부 켠 상태**다. 요구 문자열을 여기 다시 적지 않고 자기
+# 자신의 extra를 참조하는 이유는 단일 출처다 — mlx-whisper·numba의 플랫폼 마커와
+# 하한을 두 곳에 적으면 한쪽만 고치는 날 개발 환경과 사용자 환경이 조용히 갈린다.
+# stt-fwhisper까지 켜는 것은 Apple Silicon 개발자도 faster-whisper 백엔드 시험을
+# 돌려야 하기 때문이고([stt]는 그 플랫폼에서 mlx만 준다),
+# [stt]가 있어야 Apple Silicon의 MLX 경로가 개발 환경에서 살아 있다.
+dev = ["analysis-video[stt,stt-fwhisper,viz]"]
 
 [build-system]
 requires = ["hatchling"]

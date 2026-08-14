@@ -6,12 +6,15 @@
 """
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, QObject, QSettings, Signal
+from PySide6.QtCore import QByteArray, QObject, Signal
 from PySide6.QtWidgets import QApplication, QMessageBox
 
+from . import i18n
 from .flags import FlagStore
+from .i18n import tr
 from .playback import PlayerEngine
-from .shortcuts import SHORTCUT_HELP, ShortcutRouter
+from .settings import app_settings
+from .shortcuts import ShortcutRouter
 from .store import Store
 
 
@@ -32,30 +35,51 @@ def _factories():
     }
 
 
+# (창 id, 이름 카탈로그 키) — 표시명은 언제나 현재 언어로 뽑는다. 여기 문자열을
+# 그대로 두면 언어를 바꿔도 창 제목과 허브 체크리스트만 옛 언어로 남는다.
 REGISTRY = [
-    ("player", "① 플레이어"),
-    ("frame_sync", "② 프레임 싱크"),
-    ("dialogue", "③ 대사 싱크"),
-    ("timeline", "④ 타임라인"),
-    ("gallery", "⑤ 갤러리"),
-    ("compare", "⑥ 비교 리포트"),
+    ("player", "win.player"),
+    ("frame_sync", "win.frame_sync"),
+    ("dialogue", "win.dialogue"),
+    ("timeline", "win.timeline"),
+    ("gallery", "win.gallery"),
+    ("compare", "win.compare"),
 ]
+WINDOW_KEY = dict(REGISTRY)
 
 DEFAULT_OPEN = ["player", "frame_sync", "dialogue", "timeline"]
 
-# 시간축 마크 종류 — (키, 표시명, 기본 순회 대상)
-# STT 세그먼트는 581건짜리라 한 칸씩 넘기는 것이 의미가 없다. 레인·범례에는
-# 남기되 통합 순회에서는 빼고, 필요한 사람만 필터로 켠다.
+# 시간축 마크 종류 — (키, 이름 카탈로그 키, 기본 순회 대상)
+# STT 세그먼트는 긴 영상이면 수백 건이라 한 칸씩 넘기는 것이 의미가 없다.
+# 레인·범례에는 남기되 통합 순회에서는 빼고, 필요한 사람만 필터로 켠다.
 MARK_KINDS = [
-    ("frame", "채택 프레임", True),
-    ("rejected", "탈락 후보", True),
-    ("screen", "화면 시작", False),
-    ("flag", "GT 플래그", True),
-    ("requested", "주문 추출", True),
-    ("transition", "전환 구간", False),
-    ("segment", "STT 세그먼트", False),
+    ("frame", "mark.frame", True),
+    ("rejected", "mark.rejected", True),
+    ("screen", "mark.screen", False),
+    ("flag", "mark.flag", True),
+    ("requested", "mark.requested", True),
+    ("transition", "mark.transition", False),
+    ("segment", "mark.segment", False),
 ]
-MARK_LABEL = {k: label for k, label, _ in MARK_KINDS}
+_MARK_KEY = {kind: key for kind, key, _ in MARK_KINDS}
+
+
+def mark_label(kind: str) -> str:
+    """마크 종류의 현재 언어 표시명. 모듈 상수로 굳히면 언어 전환을 못 따라간다."""
+    return tr(_MARK_KEY.get(kind, kind))
+
+
+def window_label(wid: str) -> str:
+    return tr(WINDOW_KEY.get(wid, wid))
+
+
+def source_label(source: str) -> str:
+    """검출 근거(sources)의 표시명 — 모르는 값은 원문 그대로 보여 준다.
+
+    sources는 파이프라인이 늘릴 수 있는 열린 집합이다. 없는 키를 지어내는 대신
+    원문을 통과시켜야 새 근거가 생겨도 화면이 비지 않는다."""
+    key = f"source.{source}"
+    return tr(key) if i18n.has(key) else source
 
 
 class Session(QObject):
@@ -65,6 +89,7 @@ class Session(QObject):
     markJumped = Signal(str, str)        # (종류 키, 사람이 읽을 설명)
 
     unitChanged = Signal(str)            # 분석 단위 전환
+    languageChanged = Signal(str)        # UI 언어 전환 — 창들이 retranslate()로 따라온다
 
     def __init__(self, video_path: Path, out_dir: Path, unit: str | None = None):
         super().__init__()
@@ -73,7 +98,7 @@ class Session(QObject):
         self.store = Store(video_path, out_dir, unit)
         self.engine = PlayerEngine(video_path, self.store.duration)
         self.flags = FlagStore(self.root)
-        self.settings = QSettings("analysis-video", "gui")
+        self.settings = app_settings()
         # 탈락 후보는 기본 표시 — "왜 안 뽑혔나"가 검토의 절반이고, 실측 탈락 수는
         # 채택의 1/5 수준이라 화면을 어지럽히지 않는다. R로 끈다.
         self.show_rejected = True
@@ -124,7 +149,8 @@ class Session(QObject):
     def _describe_mark(self, kind: str, t: float) -> str:
         times = self.mark_times(kind)
         idx = times.index(t) + 1 if t in times else 0
-        return f"{MARK_LABEL.get(kind, kind)} {idx}/{len(times)} · t={t:.2f}"
+        return tr("mark.described", label=mark_label(kind), index=idx,
+                  total=len(times), time=t)
 
     # ---------- 창 관리 ----------
 
@@ -135,7 +161,7 @@ class Session(QObject):
             w.activateWindow()
             return w
         w = _factories()[wid](self)
-        w.setWindowTitle(f"{dict(REGISTRY)[wid]} — {self.video_path.name}")
+        w.setWindowTitle(self.window_title(wid))
         self.windows[wid] = w
         w.destroyed.connect(lambda _=None, wid=wid: self._on_closed(wid))
         geo = self.settings.value(f"geo/{wid}")
@@ -144,6 +170,10 @@ class Session(QObject):
         w.show()
         self.windowsChanged.emit()
         return w
+
+    def window_title(self, wid: str) -> str:
+        """창 제목은 세션이 조립한다 — 어느 영상의 어느 창인지가 창마다 같은 규칙."""
+        return f"{window_label(wid)} — {self.video_path.name}"
 
     def close_window(self, wid: str) -> None:
         w = self.windows.get(wid)
@@ -168,10 +198,24 @@ class Session(QObject):
         # 저장된 적 없음(None) → 기본 배치. 저장된 빈 목록 → 사용자 의도이므로 존중
         wids = DEFAULT_OPEN if saved is None else (saved if isinstance(saved, list) else [saved])
         for wid in wids:
-            if wid in dict(REGISTRY):
+            if wid in WINDOW_KEY:
                 self.open_window(wid)
 
     # ---------- 상태 ----------
+
+    def set_language(self, code: str) -> None:
+        """UI 언어 전환 — 창을 다시 만들지 않고 문자열만 갈아끼운다.
+
+        재생성 방식이면 배율·스크롤·선택 같은 검토 중 상태가 통째로 날아간다.
+        창 제목은 세션 소관이라 여기서 직접 갈고, 창 내부는 languageChanged를 받아
+        각자 retranslate()한다."""
+        if not i18n.set_language(code):
+            return
+        self.settings.setValue(i18n.SETTINGS_KEY, code)
+        self.settings.sync()
+        for wid, w in self.windows.items():
+            w.setWindowTitle(self.window_title(wid))
+        self.languageChanged.emit(code)
 
     def set_unit(self, name: str) -> None:
         """분석 단위 전환 — 데이터만 갈아끼우면 창들이 store.reloaded로 따라온다.
@@ -189,8 +233,8 @@ class Session(QObject):
         self._help_open = True
         try:
             box = QMessageBox()
-            box.setWindowTitle("키보드 단축키")
-            box.setText(f"<pre>{SHORTCUT_HELP}</pre>")
+            box.setWindowTitle(tr("help.title"))
+            box.setText(f"<pre>{tr('help.body')}</pre>")
             box.exec()
         finally:
             self._help_open = False

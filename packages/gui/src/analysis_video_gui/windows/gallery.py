@@ -10,7 +10,8 @@ from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtGui import QIcon, QImageReader, QPixmap
 from PySide6.QtWidgets import QLabel, QListWidget, QListWidgetItem, QVBoxLayout
 
-from ..session import Session
+from ..i18n import tr
+from ..session import Session, source_label
 from . import ChildWindow, fmt_time
 
 THUMB = QSize(192, 108)
@@ -19,8 +20,7 @@ CHUNK = 12  # 한 틱에 디코드할 썸네일 수
 
 class GalleryWindow(ChildWindow):
     def __init__(self, session: Session):
-        super().__init__()
-        self.session = session
+        super().__init__(session)
         self.resize(980, 640)
 
         layout = QVBoxLayout(self)
@@ -43,6 +43,10 @@ class GalleryWindow(ChildWindow):
 
         self.bind(session.store.reloaded, self._populate)
         self.bind(session.showRejectedChanged, self._on_show_rejected)
+        self._populate()
+
+    def retranslate(self) -> None:
+        """캡션이 항목마다 박혀 있어 다시 채우는 것 말고는 방법이 없다."""
         self._populate()
 
     def _on_item_clicked(self, item) -> None:
@@ -82,9 +86,11 @@ class GalleryWindow(ChildWindow):
             f, is_rejected = self._queue.pop(0)
             star = "◐" if "screen-end" in f["sources"] else ""
             if is_rejected:
+                # reject_reason은 파이프라인이 조립한 진단 코드 — 원문 그대로 (i18n 주석 참조)
                 caption = f"✗{star} {fmt_time(f['time'])}\n{f['reject_reason']}"
             else:
-                caption = f"{star} {fmt_time(f['time'])}\n{'+'.join(f['sources'])}"
+                sources = "+".join(source_label(s) for s in f["sources"])
+                caption = f"{star} {fmt_time(f['time'])}\n{sources}"
             item = QListWidgetItem(self._thumb(f["image"]), caption)
             item.setData(Qt.ItemDataRole.UserRole, f["time"])
             if is_rejected:
@@ -94,5 +100,6 @@ class GalleryWindow(ChildWindow):
 
     def _update_status(self) -> None:
         done = self._total - len(self._queue)
-        suffix = "" if not self._queue else f" — 로딩 {done}/{self._total}"
-        self._status.setText(f"프레임 {self._total}장{suffix} (R: 탈락 포함 토글)")
+        suffix = ("" if not self._queue
+                  else tr("gallery.loading", done=done, total=self._total))
+        self._status.setText(tr("gallery.status", total=self._total, suffix=suffix))

@@ -15,10 +15,39 @@ import pytest
 from PySide6.QtWidgets import QApplication
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _isolated_settings(tmp_path_factory):
+    """QSettings를 임시 디렉토리로 격리한다.
+
+    테스트가 언어·레이아웃·창 위치를 저장하는데, 기본 NativeFormat은 실제 사용자
+    설정(macOS plist)에 그대로 쓴다 — 테스트를 한 번 돌리면 개발자가 쓰던 GUI의
+    언어가 바뀌어 있다. NativeFormat은 macOS에서 setPath를 무시하므로 형식 자체를
+    IniFormat으로 바꿔 경로를 잡는다. 첫 QSettings 생성 전에 걸려야 하므로
+    세션 스코프 autouse.
+    """
+    from PySide6.QtCore import QSettings
+
+    QSettings.setDefaultFormat(QSettings.Format.IniFormat)
+    QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope,
+                      str(tmp_path_factory.mktemp("qsettings")))
+    yield
+
+
 @pytest.fixture(scope="session")
 def qapp():
     app = QApplication.instance() or QApplication([])
     yield app
+
+
+@pytest.fixture(autouse=True)
+def _default_language():
+    """언어는 프로세스 전역 상태다 — 앞 테스트가 바꿔 두면 다음 테스트의 문구
+    단언이 이유 없이 깨진다. 매 테스트를 기본 언어에서 시작시킨다."""
+    from analysis_video_gui import i18n
+
+    i18n.set_language(i18n.DEFAULT)
+    yield
+    i18n.set_language(i18n.DEFAULT)
 
 
 @pytest.fixture
@@ -103,11 +132,20 @@ def video_short_audio(tmp_path) -> Path:
 
 @pytest.fixture
 def analyzed(video_av, tmp_path) -> tuple[Path, Path]:
-    """CLI 파이프라인을 실제로 돌려 .analysis 산출물을 만든다 (GUI의 입력 계약)."""
+    """CLI 파이프라인을 실제로 돌려 .analysis 산출물을 만든다 (GUI의 입력 계약).
+
+    transcribe에 `--model tiny`를 **명시**한다. 이 픽스처의 영상에는 무음 오디오
+    트랙이 있고 자막은 없어서 사다리 끝의 whisper까지 내려가는데, 기본값이
+    small로 바뀌면서 기본값에 맡기면 매 실행마다 약 460MB(tiny는 약 71MB)를
+    받는다. 더구나 CI의 가중치 캐시 키(ci.yml `hf-tiny-*`)는 이미 존재하는
+    키를 덮어쓰지 않으므로, 캐시에는 tiny만 든 채 매 실행이 small을 새로
+    내려받는다. GUI 테스트가 검증하는 것은 **산출물의 형태**이지 전사 품질이
+    아니므로 가장 작은 모델로 고정하는 것이 맞다."""
     from analysis_video import cli
 
     out_dir = tmp_path / "out.analysis"
     assert cli.main(["split", str(video_av), "--out", str(out_dir)]) == 0
-    assert cli.main(["transcribe", str(video_av), "--out", str(out_dir)]) == 0
+    assert cli.main(["transcribe", str(video_av), "--out", str(out_dir),
+                     "--model", "tiny"]) == 0
     assert cli.main(["frames", str(video_av), "--out", str(out_dir)]) == 0
     return video_av, out_dir

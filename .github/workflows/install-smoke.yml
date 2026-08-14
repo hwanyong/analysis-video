@@ -1,0 +1,273 @@
+name: install-smoke
+
+# 최종 사용자의 설치를 재현하는 잡. ci.yml 과 반드시 분리해야 한다:
+# ci.yml 은 uv.lock 으로 고정된 조합만 보므로, "lock 없는 사용자에게 버전 계산이
+# 어떻게 되는가"를 구조적으로 볼 수 없다. 실제로 그 사각지대에서 numba가 2021년
+# 버전까지 후퇴해 설치가 실패하고 있었다(CHANGELOG 0.1.0 이후 '수정' 참조).
+#
+# 그래서 이 잡은:
+#   1) 저장소 밖으로 packages/core 를 복사해 lock 이 닿지 않게 한다
+#   2) --no-build 로 "설치본만으로 해석되는가"를 강제한다 (소스 컴파일은 실패로 본다)
+#   3) 상류가 새 버전을 내면서 조합이 깨지는 것을 주간 cron 으로 감시한다
+#
+# 액션 핀은 ci.yml 머리말의 규칙을 따른다(setup-uv 만 전체 버전 — 메이저 태그 없음).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "packages/core/pyproject.toml"
+      - "packages/gui/pyproject.toml"
+      # install 잡은 wheel을 실제로 깔아 --version·agent-guide 를 실행한다 —
+      # 소스가 바뀌면 그 실행이 깨질 수 있으므로 src 도 트리거에 넣는다.
+      - "packages/core/src/**"
+      - "packages/gui/src/**"
+      - ".github/workflows/install-smoke.yml"
+  pull_request:
+    paths:
+      - "packages/core/pyproject.toml"
+      - "packages/gui/pyproject.toml"
+      # install 잡은 wheel을 실제로 깔아 --version·agent-guide 를 실행한다 —
+      # 소스가 바뀌면 그 실행이 깨질 수 있으므로 src 도 트리거에 넣는다.
+      - "packages/core/src/**"
+      - "packages/gui/src/**"
+      - ".github/workflows/install-smoke.yml"
+  schedule:
+    # 상류 릴리스로 조합이 깨지는 건 우리 커밋 없이도 일어난다
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+jobs:
+  resolve:
+    name: 버전 계산 (전 플랫폼 · 설치본만)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.0.0
+        with:
+          # 해석 잡 둘만 캐시를 끈다(명시하지 않으면 기본값 auto 라 켜진다).
+          # 여기서 재현하려는 것은 "아무것도 받아 둔 적 없는 사람이 지금 설치하면
+          # 어떻게 되는가"이고, 주간 cron 의 목적은 상류가 낸 새 버전으로 조합이
+          # 깨지는 것을 잡는 것이다. 받아 둔 색인 응답과 설치본을 재사용하면 그
+          # 감시가 캐시 재검증 동작에 기대게 된다. 해석은 잡당 몇 분이라
+          # 아끼는 시간보다 이쪽이 중요하다. (아래 install 잡은 반대다.)
+          enable-cache: false
+
+      - name: 저장소 밖으로 복사 (uv.lock 격리)
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/smoke"
+          cp -R packages/core "$RUNNER_TEMP/smoke/core"
+          # 워크스페이스 루트를 딸려 보내지 않는다 — 루트의 override 선언이
+          # 사용자에게는 적용되지 않으므로 여기서도 적용되면 안 된다
+          test ! -e "$RUNNER_TEMP/smoke/pyproject.toml"
+
+      - name: 지원 조합은 두 축 모두 해석돼야 한다 (extra 없이 · [stt])
+        working-directory: ${{ runner.temp }}/smoke
+        run: |
+          set -uo pipefail
+          # STT 백엔드는 [stt] extra 로 내려갔다. 그래서 축이 둘이다:
+          #   · extra 없이 — 최종 사용자의 기본 설치. 전 조합에서 해석돼야 하고,
+          #     STT 백엔드가 한 줄도 딸려 오면 안 된다. 딸려 오면 extra 로 내린
+          #     의미(macOS 기준 디스크 308MB → 1,180MB)가 없어지는데, 해석은 그대로
+          #     성공하므로 검사가 없으면 아무도 모른 채 통과한다.
+          #   · [stt] — 자막이 없는 영상을 위한 설치. 전 조합에서 해석돼야 하고,
+          #     백엔드가 실제로 하나 이상 붙어야 한다. 이 검사가 필요한 이유는
+          #     **uv 가 없는 extra 를 조용히 무시하기 때문이다**(경고도 없다) —
+          #     이름이 틀렸거나 없어져도 `./core[stt]` 는 그냥 성공한다.
+          # macOS + 3.14 만 예외다: 상류 휠이 없어(mlx 는 cp313까지, onnxruntime 는
+          # macOS cp314 부재) [stt] 를 붙여도 백엔드가 붙지 않는다. 설치는 되고
+          # doctor 는 종료코드 0으로 speech-recognition 을 available: false 로
+          # 보고하는 것이 이 조합의 기대 동작이다 — 종료코드 4는 자막이 없는 영상을
+          # 실제로 전사하려 들 때 그 자리에서 난다.
+          BACKENDS='mlx-whisper|faster-whisper'
+          resolve() {   # $1=플랫폼 $2=파이썬 $3=설치 대상
+            uv pip install --dry-run --python "$2" --python-platform "$1" \
+              --target "$RUNNER_TEMP/t" --no-build "$3" 2>&1
+          }
+          backends_in() {   # 해석 결과에 들어온 STT 백엔드 이름들
+            printf '%s\n' "$1" | grep -oE "^ *\+ ($BACKENDS)==[^ ]+" \
+              | sed -E 's/^ *\+ //' | sort -u | paste -sd, -
+          }
+          fail=0
+          for plat in aarch64-apple-darwin x86_64-apple-darwin \
+                      x86_64-manylinux_2_28 aarch64-manylinux_2_28 \
+                      x86_64-pc-windows-msvc; do
+            for py in 3.11 3.12 3.13 3.14; do
+              label="$plat py$py"
+              status=ok
+              if base=$(resolve "$plat" "$py" ./core); then
+                base_backends=$(backends_in "$base")
+                if [ -n "$base_backends" ]; then
+                  echo "  ↳ $label · extra 없는 설치에 STT 백엔드가 딸려 왔다: $base_backends"
+                  status=FAIL
+                fi
+              else
+                echo "  ↳ $label · extra 없이 해석 실패"
+                printf '%s\n' "$base" | tail -5
+                base_backends=""
+                status=FAIL
+              fi
+
+              if stt=$(resolve "$plat" "$py" './core[stt]'); then
+                stt_backends=$(backends_in "$stt")
+              else
+                echo "  ↳ $label · [stt] 해석 실패"
+                printf '%s\n' "$stt" | tail -5
+                stt_backends=""
+                status=FAIL
+              fi
+
+              want=some
+              case "$plat" in *apple-darwin) [ "$py" = "3.14" ] && want=none ;; esac
+              if [ "$want" = some ] && [ -z "$stt_backends" ]; then
+                echo "  ↳ $label · [stt] 인데 STT 백엔드가 하나도 붙지 않았다 (extra 이름이나 마커를 확인할 것)"
+                status=FAIL
+              fi
+              if [ "$want" = none ] && [ -n "$stt_backends" ]; then
+                echo "::warning::$label · 백엔드가 없어야 할 조합에 $stt_backends 가 붙었다 — 상류가 휠을 내기 시작했다면 README·CHANGELOG 의 한계 항목을 갱신할 것"
+              fi
+              printf '%-4s %s · 기본=%s · [stt]=%s\n' \
+                "$status" "$label" "${base_backends:-백엔드 없음}" "${stt_backends:-없음}"
+              [ "$status" = ok ] || fail=1
+            done
+          done
+          exit $fail
+
+      - name: 알려진 미지원 조합이 지원되기 시작했는지 감시 (관측 전용 — 실패시키지 않음)
+        working-directory: ${{ runner.temp }}/smoke
+        run: |
+          set -uo pipefail
+          # Windows ARM64: opencv-python-headless 에 win_arm64 설치본이 없다.
+          # 무조건 의존(scenedetect[opencv-headless])이 원인이라 [stt] 와 무관하다 —
+          # extra 를 떼도 붙여도 똑같이 해석되지 않으므로 기본 축 하나만 본다.
+          # 상류가 내주면 notice 로 알린다. **이 스텝은 실패시키지 않는다** —
+          # 지원 확대는 우리 잘못이 아니므로 릴리스를 막을 이유가 없고, 다만
+          # README·CHANGELOG 의 한계 항목을 갱신해야 한다는 신호가 필요할 뿐이다.
+          if uv pip install --dry-run --python 3.12 \
+               --python-platform aarch64-pc-windows-msvc \
+               --target "$RUNNER_TEMP/t2" --no-build ./core >/dev/null 2>&1; then
+            echo "::warning::Windows ARM64 가 이제 해석된다 — README·CHANGELOG 의 한계 항목을 갱신할 것"
+          else
+            echo "ok (여전히 미지원, 예상대로)"
+          fi
+
+  resolve-gui:
+    name: 버전 계산 · GUI (전 플랫폼 · 설치본만)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.0.0
+        with:
+          enable-cache: false   # 위 resolve 잡과 같은 이유
+
+      # 코어가 아직 PyPI에 없어도 이 잡이 돌아야 한다(첫 릴리스 이전). 그래서 코어를
+      # 여기서 만들어 지역 색인으로 넘긴다. GUI 자신의 의존 조합만 보는 것이 목적이다.
+      - name: 코어를 지역 색인으로 준비
+        run: uv build --package analysis-video --out-dir "$RUNNER_TEMP/idx"
+
+      - name: 저장소 밖으로 복사 (uv.lock 격리)
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/smoke-gui"
+          cp -R packages/gui "$RUNNER_TEMP/smoke-gui/gui"
+          test ! -e "$RUNNER_TEMP/smoke-gui/pyproject.toml"
+          # packages/gui 는 그 자체로 완결돼야 한다. tool.uv.sources 가 여기 있으면
+          # 워크스페이스 밖 설치에서 uv가 워크스페이스를 찾다 실패한다.
+          # 표 머리글만 본다 — "여기 두지 말 것" 주석이 그 문자열을 포함한다.
+          # if 문으로 쓴다: `! cmd` 는 set -e 가 무시하므로 가드가 되지 않는다.
+          if grep -qE '^\[tool\.uv\.sources\]' "$RUNNER_TEMP/smoke-gui/gui/pyproject.toml"; then
+            echo "::error::packages/gui/pyproject.toml 에 [tool.uv.sources] 가 있습니다 — 루트로 옮기세요"
+            exit 1
+          fi
+
+      - name: 지원 조합은 전부 해석돼야 한다
+        working-directory: ${{ runner.temp }}/smoke-gui
+        run: |
+          set -uo pipefail
+          fail=0
+          # GUI 는 코어를 extra 없이 요구한다 — 이 창은 산출물을 보는 도구라
+          # STT 가 필요 없다. 축이 하나인 이유다.
+          # 리눅스 하한이 코어보다 높다 — Qt 설치본이 x86_64는 glibc 2.28,
+          # aarch64는 2.31 부터다. 그 아래는 아예 해석되지 않는다.
+          for plat in aarch64-apple-darwin x86_64-apple-darwin \
+                      x86_64-manylinux_2_28 aarch64-manylinux_2_31 \
+                      x86_64-pc-windows-msvc; do
+            for py in 3.11 3.12 3.13 3.14; do
+              if uv pip install --dry-run --python "$py" --python-platform "$plat" \
+                   --find-links "$RUNNER_TEMP/idx" \
+                   --target "$RUNNER_TEMP/tg" --no-build ./gui >/dev/null 2>&1; then
+                echo "ok   $plat py$py"
+              else
+                echo "FAIL $plat py$py"
+                fail=1
+              fi
+            done
+          done
+          exit $fail
+
+      - name: 오래된 리눅스는 구버전 Qt로 떨어진다 (감시만)
+        working-directory: ${{ runner.temp }}/smoke-gui
+        run: |
+          set -uo pipefail
+          # 실패가 아니라 관측이다. 상류가 낡은 glibc 지원을 더 끊으면 여기 숫자가
+          # 내려가고, 그때 packages/gui/README.md 의 지원 범위 표를 갱신한다.
+          # 2>&1 인 이유: uv 는 해석 목록("+ 패키지==버전")을 **stderr** 에 쓴다.
+          # stdout 만 보면 언제나 빈 문자열이라 "해석 실패"만 찍힌다.
+          for plat in x86_64-manylinux_2_28 aarch64-manylinux_2_31; do
+            v=$(uv pip install --dry-run --python 3.12 --python-platform "$plat" \
+                  --find-links "$RUNNER_TEMP/idx" \
+                  --target "$RUNNER_TEMP/tg2" --no-build ./gui 2>&1 \
+                | grep -oE 'pyside6-essentials==[0-9.]+' | head -1)
+            echo "$plat → ${v:-해석 실패}"
+          done
+
+  install:
+    name: 실제 설치 · ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.0.0
+        with:
+          # 위 해석 잡들과 달리 여기는 캐시를 켠다. 이 잡이 묻는 것은 "깔린 뒤에
+          # 실행되는가"이지 "무엇으로 해석되는가"가 아니라(그건 위에서 봤다),
+          # 받아 둔 설치본을 다시 써도 답이 달라지지 않는다. 3개 OS × 주간 cron
+          # 이라 내려받는 양이 그대로 시간이 된다.
+          enable-cache: true
+
+      - name: 배포물 빌드
+        run: uv build --package analysis-video --out-dir dist-release
+
+      # 저장소 밖에서, 빌드된 설치본으로. extra 없이 깐다 — `--version`·`agent-guide`·
+      # `doctor` 는 STT 백엔드를 요구하지 않으므로 [stt] 없는 기본 설치에서 성공해야
+      # 한다. 그것이 extra 로 내린 이유다: 자막이 있는 영상은 872MB 없이 끝까지 간다.
+      # `agent-guide` 를 부르는 것은 문구를 보려는 게 아니라 **배포물에 모듈이 다
+      # 들어갔는지**를 보려는 것이다 — 가이드는 import 시점에 모듈 상수에서 조립되므로
+      # 한 파일이라도 빠지면 여기서 죽는다. `doctor` 는 종료코드 0이어야 한다(백엔드
+      # 부재는 능력의 부재이지 고장이 아니다) — 여기서 4가 나오면 필수 모듈 결손이다.
+      - name: 저장소 밖에서 설치 후 실행 (POSIX)
+        if: runner.os != 'Windows'
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          uv tool install --from "$GITHUB_WORKSPACE"/dist-release/*.whl analysis-video
+          uv tool run --from analysis-video analysis-video --version
+          uv tool run --from analysis-video analysis-video agent-guide | head -3
+          uv tool run --from analysis-video analysis-video doctor
+
+      - name: 저장소 밖에서 설치 후 실행 (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $whl = (Get-ChildItem "$env:GITHUB_WORKSPACE/dist-release/*.whl")[0].FullName
+          Set-Location $env:RUNNER_TEMP
+          uv tool install --from $whl analysis-video
+          uv tool run --from analysis-video analysis-video --version
+          # 한국어 출력이 cp949 콘솔에서 죽지 않는지도 같이 본다(cli.main 의 재설정)
+          uv tool run --from analysis-video analysis-video agent-guide | Select-Object -First 3
+          uv tool run --from analysis-video analysis-video doctor
+          if ($LASTEXITCODE -ne 0) { throw "doctor 가 종료코드 $LASTEXITCODE — 기본 설치에서는 0이어야 합니다" }

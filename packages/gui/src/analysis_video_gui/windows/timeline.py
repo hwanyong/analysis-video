@@ -23,10 +23,13 @@ import math
 import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import QEvent, Qt
-from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QHBoxLayout, QLabel, QSlider,
-                               QToolButton, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QHBoxLayout, QLabel,
+                               QScrollArea, QSlider, QToolButton, QVBoxLayout,
+                               QWidget)
 
-from ..session import MARK_KINDS, Session
+from ..i18n import tr
+from ..keys import physical_key
+from ..session import MARK_KINDS, Session, mark_label, source_label
 from . import ChildWindow, fmt_time
 
 # 범례 체크박스에 쓰는 마크 종류별 색·기호 (레인에 그리는 것과 같아야 한다)
@@ -53,13 +56,18 @@ LANE_RATE = (1.85, 3.05)   # 순간 변화율 — 기준선 아래로 내려가�
 LANE_AREA = (0.3, 1.5)     # 컷 면적 — 기준선을 넘겨야 전환 시작(컷)
 DIFF_BAND = (LANE_AREA[0], LANE_ANCHOR[1])   # 전환 구간 음영이 덮는 범위
 
-LANE_TICKS = [
-    (sum(LANE_FRAMES) / 2, "프레임"), (LANE_REJECTED, "탈락"),
-    (LANE_REQUESTED, "주문"), (LANE_SCREENS, "화면"),
-    (sum(LANE_STT) / 2, "STT"), (LANE_FLAGS, "플래그"),
-    (sum(LANE_ANCHOR) / 2, "anchor diff"), (sum(LANE_RATE) / 2, "순간 변화율"),
-    (sum(LANE_AREA) / 2, "컷 면적"),
+# 레인 눈금은 (y, 이름 카탈로그 키) — 상수로 굳히면 언어 전환을 못 따라간다
+LANE_TICK_KEYS = [
+    (sum(LANE_FRAMES) / 2, "lane.frames"), (LANE_REJECTED, "lane.rejected"),
+    (LANE_REQUESTED, "lane.requested"), (LANE_SCREENS, "lane.screens"),
+    (sum(LANE_STT) / 2, "lane.stt"), (LANE_FLAGS, "lane.flags"),
+    (sum(LANE_ANCHOR) / 2, "lane.anchor"), (sum(LANE_RATE) / 2, "lane.rate"),
+    (sum(LANE_AREA) / 2, "lane.area"),
 ]
+
+
+def _lane_ticks() -> list[tuple[float, str]]:
+    return [(y, tr(key)) for y, key in LANE_TICK_KEYS]
 
 # 정규화 배율: 임계값이 각 레인의 이 비율 위치에 오도록 잡는다
 ANCHOR_FULL = 4.0   # anchor diff == 4×임계에서 레인 천장
@@ -77,21 +85,13 @@ MIN_SPAN = 2.0        # 최대 확대에서 보이는 시간 폭(초)
 ZOOM_STEPS = 1000     # 배율 슬라이더 해상도 (로그 눈금)
 SNAP_PIXELS = 12      # 클릭 스냅 허용오차 — 시간이 아니라 화면 픽셀 기준(편집기 관례)
 
-TOOLS = [
-    ("scrub", "▶ 스크럽", "V",
-     "드래그 = 재생 위치 실시간 이동 · 클릭 = 그 시각으로 점프"),
-    ("pan", "✋ 이동", "H",
-     "드래그 = 상하좌우 이동 · 오른쪽 드래그 = 축 배율"),
-    ("zoom", "🔍 확대", "Z",
-     "드래그 = 사각 영역만큼 확대 · 오른쪽 드래그 = 축 배율"),
-]
-TOOL_HINT = {key: hint for key, _, _, hint in TOOLS}
+# (도구 키, 가속키) — 이름과 설명은 `tool.<키>` / `tool.<키>.hint`로 카탈로그에서 온다
+TOOLS = [("scrub", "V"), ("pan", "H"), ("zoom", "Z")]
 TOOL_CURSOR = {
     "scrub": Qt.CursorShape.SizeHorCursor,
     "pan": Qt.CursorShape.OpenHandCursor,
     "zoom": Qt.CursorShape.CrossCursor,
 }
-COMMON_HINT = "휠 = 확대·축소 · Space 홀드+드래그 = 임시 이동"
 
 
 def _swatch(color: tuple, glyph: str = "■") -> str:
@@ -126,8 +126,7 @@ class _TimelineViewBox(pg.ViewBox):
 
 class TimelineWindow(ChildWindow):
     def __init__(self, session: Session):
-        super().__init__()
-        self.session = session
+        super().__init__(session)
         self.resize(1500, 520)
 
         self._tool = "scrub"
@@ -146,7 +145,7 @@ class TimelineWindow(ChildWindow):
         vb = _TimelineViewBox(self)
         self._pw = pg.PlotWidget(background="#181818", viewBox=vb)
         plot_col.addWidget(self._pw, stretch=1)
-        self._readout = QLabel("마우스를 올리면 그 시각의 내용이 여기 나옵니다")
+        self._readout = QLabel()
         self._readout.setStyleSheet("color:#aaa; padding:2px 4px;")
         self._readout.setTextFormat(Qt.TextFormat.RichText)
         plot_col.addWidget(self._readout)
@@ -155,8 +154,6 @@ class TimelineWindow(ChildWindow):
 
         vb.setLimits(yMin=Y_RANGE[0] - 0.4, yMax=Y_RANGE[1] + 0.4)
         self._pw.setYRange(*Y_RANGE, padding=0)
-        self._pw.getAxis("left").setTicks([LANE_TICKS])
-        self._pw.setLabel("bottom", "시간(초)")
 
         self._playhead = pg.InfiniteLine(
             pos=0, angle=90, movable=True, pen=pg.mkPen("#ff5555", width=2),
@@ -173,6 +170,7 @@ class TimelineWindow(ChildWindow):
                                                  pen=None, hoverable=True,
                                                  tip=lambda x, y, data: data)
 
+        self._retranslate_chrome()  # 축 라벨·눈금·도구 이름 (_build는 그래프 본체)
         self._build()
         self.bind(session.store.reloaded, self._build)
         self.bind(session.flags.changed, self._on_flags_changed)
@@ -191,33 +189,32 @@ class TimelineWindow(ChildWindow):
         self._tool_group = QButtonGroup(self)
         self._tool_group.setExclusive(True)
         self._tool_buttons: dict[str, QToolButton] = {}
-        for key, label, accel, hint in TOOLS:
+        for key, _accel in TOOLS:
             b = QToolButton()
-            b.setText(f"{label} ({accel})")
             b.setCheckable(True)
             b.setChecked(key == self._tool)
             # 포커스를 잡으면 전역 단축키가 이 버튼에 먹힌다 — 도구 막대는 포커스 밖
             b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-            b.setToolTip(hint)
             b.clicked.connect(lambda _c, k=key: self.set_tool(k))
             self._tool_group.addButton(b)
             self._tool_buttons[key] = b
             bar.addWidget(b)
 
         bar.addSpacing(16)
-        bar.addWidget(QLabel("배율"))
-        bar.addWidget(self._zoom_button("－", lambda: self.zoom_by(1 / 1.6), "축소"))
+        self._zoom_title = QLabel()
+        bar.addWidget(self._zoom_title)
+        self._zoom_buttons: dict[str, QToolButton] = {}
+        bar.addWidget(self._zoom_button("out", "－", lambda: self.zoom_by(1 / 1.6)))
 
         self._zoom_slider = QSlider(Qt.Orientation.Horizontal)
         self._zoom_slider.setRange(0, ZOOM_STEPS)
         self._zoom_slider.setFixedWidth(200)
         self._zoom_slider.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._zoom_slider.setToolTip("전체 보기 ↔ 최대 확대")
         self._zoom_slider.valueChanged.connect(self._on_zoom_slider)
         bar.addWidget(self._zoom_slider)
 
-        bar.addWidget(self._zoom_button("＋", lambda: self.zoom_by(1.6), "확대"))
-        bar.addWidget(self._zoom_button("⤢", self.fit_all, "전체 보기"))
+        bar.addWidget(self._zoom_button("in", "＋", lambda: self.zoom_by(1.6)))
+        bar.addWidget(self._zoom_button("fit", "⤢", self.fit_all))
         self._zoom_label = QLabel("1.0×")
         self._zoom_label.setFixedWidth(52)
         bar.addWidget(self._zoom_label)
@@ -228,12 +225,12 @@ class TimelineWindow(ChildWindow):
         bar.addWidget(self._hint, stretch=1)
         return bar
 
-    def _zoom_button(self, text: str, cb, tip: str) -> QToolButton:
+    def _zoom_button(self, key: str, text: str, cb) -> QToolButton:
         b = QToolButton()
-        b.setText(text)
-        b.setToolTip(tip)
+        b.setText(text)   # 기호 버튼 — 설명(툴팁)만 언어를 탄다
         b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         b.clicked.connect(lambda: cb())
+        self._zoom_buttons[key] = b
         return b
 
     # ---------- 범례 ----------
@@ -242,7 +239,6 @@ class TimelineWindow(ChildWindow):
         """범례이자 순회 필터. 체크박스가 곧 ↓/↑와 클릭 스냅의 대상 목록이다 —
         각 종류의 뜻·색·개수를 이미 들고 있는 자리라 필터를 따로 둘 이유가 없다."""
         box = QWidget()
-        box.setFixedWidth(238)
         # 그래프를 설명하는 패널이므로 그래프와 같은 배경 — 시선이 두 번 적응하지 않게
         box.setStyleSheet("background:#181818; color:#ddd;")
         lay = QVBoxLayout(box)
@@ -254,12 +250,12 @@ class TimelineWindow(ChildWindow):
         self._legend_head.setWordWrap(True)
         lay.addWidget(self._legend_head)
 
-        lay.addWidget(self._note("<span style='color:#888'>체크 = ↓/↑ 순회·클릭 스냅 대상"
-                                 "</span>"))
+        self._legend_check = self._note("")
+        lay.addWidget(self._legend_check)
         self._kind_boxes: dict[str, QCheckBox] = {}
-        for kind, label, _default in MARK_KINDS:
+        for kind, _key, _default in MARK_KINDS:
             color, glyph = KIND_STYLE[kind]
-            cb = QCheckBox(f"{glyph} {label}")
+            cb = QCheckBox()          # 텍스트는 _update_legend가 개수와 함께 채운다
             cb.setChecked(kind in self.session.traverse)
             cb.setFocusPolicy(Qt.FocusPolicy.NoFocus)  # 전역 단축키를 뺏기지 않게
             cb.setStyleSheet(f"color: rgb{color};")
@@ -272,7 +268,19 @@ class TimelineWindow(ChildWindow):
         self._legend_tail.setWordWrap(True)
         lay.addWidget(self._legend_tail)
         lay.addStretch(1)
-        return box
+
+        # 범례 높이는 언어(문장 길이)와 임계값 표시 유무에 따라 달라진다. 창 높이에
+        # 그대로 담으면 넘치는 만큼이 조용히 잘리고, 못 본 항목을 "없는 것"으로 읽게
+        # 된다 — 색·기호의 뜻을 담은 패널에서 그건 그래프를 오독시킨다.
+        scroll = QScrollArea()
+        scroll.setWidget(box)
+        scroll.setWidgetResizable(True)
+        scroll.setFixedWidth(254)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setFocusPolicy(Qt.FocusPolicy.NoFocus)  # 전역 단축키를 뺏기지 않게
+        scroll.setStyleSheet("background:#181818;")
+        return scroll
 
     @staticmethod
     def _note(html: str) -> QLabel:
@@ -284,46 +292,67 @@ class TimelineWindow(ChildWindow):
     def _update_legend(self) -> None:
         st = self.session.store
         counts = st.source_counts()
-        head = [f"<b>프레임 채택 {len(st.frames)}</b>"]
-        head += [f"&nbsp;{_swatch(SOURCE_COLORS[s])} {s} {counts.get(s, 0)}"
+        head = [tr("timeline.legend_frames", count=len(st.frames))]
+        head += [tr("timeline.legend_source", swatch=_swatch(SOURCE_COLORS[s]),
+                    label=source_label(s), count=counts.get(s, 0))
                  for s in SOURCE_ORDER]
-        head.append("&nbsp;<span style='color:#eee'>▭</span> 흰 테두리 = 복합 근거")
+        head.append(tr("timeline.legend_multi"))
         self._legend_head.setText("<br>".join(head))
 
         counts_by_kind = {k: len(self.session.mark_times(k)) for k, _, _ in MARK_KINDS}
-        for kind, label, _d in MARK_KINDS:
+        for kind, _key, _d in MARK_KINDS:
             glyph = KIND_STYLE[kind][1]
             extra = ""
             if kind == "rejected" and not self.session.show_rejected:
-                extra = " · 숨김(R)"
+                extra = tr("timeline.kind_hidden")
             elif kind == "requested" and not counts_by_kind[kind]:
-                extra = " · frame --at"
+                extra = tr("timeline.kind_need_at")
             elif kind == "flag" and not counts_by_kind[kind]:
-                extra = " · F로 기입"
-            self._kind_boxes[kind].setText(
-                f"{glyph} {label} {counts_by_kind[kind]}{extra}")
+                extra = tr("timeline.kind_need_flag")
+            self._kind_boxes[kind].setText(tr(
+                "timeline.kind_item", glyph=glyph, label=mark_label(kind),
+                count=counts_by_kind[kind], extra=extra))
 
-        tail = ["<span style='color:#888'>GT 플래그 = “이 장면은 뽑혔어야 한다”는 사람의"
-                " 정답. F 추가/취소, ▼ ⇧클릭 삭제, G 이동. ⑥ 비교 리포트가 검출과"
-                " 대조해 recall·precision을 낸다.</span>", ""]
+        tail = [tr("timeline.legend_gt"), ""]
         if st.series is not None:
-            ath = st.series["anchor_threshold"]
-            rth = st.series["rate_threshold"]
-            cth = st.series["cut_area_threshold"]
             tail += [
-                "<span style='color:#888'>전환 시작 = anchor diff <b>또는</b> 컷 면적이"
-                " 기준을 넘을 때. 그 뒤 순간 변화율이 잦아들면 트리거.</span>", "",
-                f"{_swatch((90, 160, 255), '━')} anchor diff (앵커와의 거리)",
-                f"&nbsp;&nbsp;<span style='color:#f55'>┈</span> {ath} <b>넘으면</b> 전환 시작",
-                f"{_swatch((255, 160, 60), '━')} 순간 변화율 (직전 프레임 대비)",
-                f"&nbsp;&nbsp;<span style='color:#f55'>┈</span> {rth} <b>아래로</b> 내려가면 트리거",
-                f"{_swatch((190, 130, 255), '━')} 컷 면적 (확 바뀐 픽셀 비율)",
-                f"&nbsp;&nbsp;<span style='color:#f55'>┈</span> {cth} <b>넘으면</b> 컷",
+                tr("timeline.legend_transition"), "",
+                tr("timeline.legend_anchor", swatch=_swatch((90, 160, 255), "━")),
+                tr("timeline.legend_anchor_thr", value=st.series["anchor_threshold"]),
+                tr("timeline.legend_rate", swatch=_swatch((255, 160, 60), "━")),
+                tr("timeline.legend_rate_thr", value=st.series["rate_threshold"]),
+                tr("timeline.legend_area", swatch=_swatch((190, 130, 255), "━")),
+                tr("timeline.legend_area_thr", value=st.series["cut_area_threshold"]),
             ]
         else:
-            tail.append("<span style='color:#777'>detect_anchor.npz 없음 — 변화량 미표시"
-                        "</span>")
+            tail.append(tr("timeline.no_series"))
         self._legend_tail.setText("<br>".join(tail))
+
+    # ---------- 현지화 ----------
+
+    def retranslate(self) -> None:
+        self._retranslate_chrome()
+        # 기준선 라벨이 그래프 아이템 생성 시점에 박히므로 다시 그린다. 보던 구간은
+        # 지킨다 — 언어를 바꿨다고 확대해 둔 자리를 잃으면 검토가 끊긴다.
+        (x0, x1), _ = self._pw.getViewBox().viewRange()
+        self._build()
+        self._pw.setXRange(x0, x1, padding=0)
+
+    def _retranslate_chrome(self) -> None:
+        """그래프 바깥(축·도구 막대·범례 머리말·판독 줄)의 문자열."""
+        self._pw.setLabel("bottom", tr("timeline.axis_time"))
+        self._pw.getAxis("left").setTicks([_lane_ticks()])
+        for key, accel in TOOLS:
+            b = self._tool_buttons[key]
+            b.setText(tr("tool.button", label=tr(f"tool.{key}"), accel=accel))
+            b.setToolTip(tr(f"tool.{key}.hint"))
+        self._zoom_title.setText(tr("timeline.zoom"))
+        self._zoom_slider.setToolTip(tr("timeline.zoom_slider_tip"))
+        for key, tip in (("out", "timeline.zoom_out"), ("in", "timeline.zoom_in"),
+                         ("fit", "timeline.fit_all")):
+            self._zoom_buttons[key].setToolTip(tr(tip))
+        self._legend_check.setText(tr("timeline.legend_check"))
+        self._readout.setText(tr("timeline.readout_idle"))
 
     # ---------- 도구 ----------
 
@@ -343,8 +372,9 @@ class TimelineWindow(ChildWindow):
         vb.setMouseEnabled(x=tool != "scrub", y=tool != "scrub")
         self._playhead.setMovable(tool == "scrub")
         self._pw.setCursor(TOOL_CURSOR[tool])
-        held = " · Space 홀드 중" if self._space_held else ""
-        self._hint.setText(f"{TOOL_HINT[tool]}{held}    |    {COMMON_HINT}")
+        held = tr("tool.space_held") if self._space_held else ""
+        self._hint.setText(
+            f"{tr(f'tool.{tool}.hint')}{held}    |    {tr('tool.common_hint')}")
 
     def note_pan(self) -> None:
         if self._space_held:
@@ -352,13 +382,14 @@ class TimelineWindow(ChildWindow):
 
     def handle_shortcut(self, ev) -> bool:
         """활성 창 우선권으로 받는 키 — Space는 홀드-이동, 탭은 재생/정지."""
+        key = physical_key(ev)   # 문자가 아니라 자리 — 한글 입력에서도 같게 동작
         tool_key = {Qt.Key.Key_V: "scrub", Qt.Key.Key_H: "pan",
-                    Qt.Key.Key_Z: "zoom"}.get(ev.key())
+                    Qt.Key.Key_Z: "zoom"}.get(key)
         if tool_key is not None:
             if ev.type() == QEvent.Type.KeyPress and not ev.isAutoRepeat():
                 self.set_tool(tool_key)
             return True
-        if ev.key() != Qt.Key.Key_Space:
+        if key != Qt.Key.Key_Space:
             return False
         if ev.isAutoRepeat():
             return True   # 홀드 유지 — 자동 반복이 재생 토글로 새지 않게
@@ -472,7 +503,8 @@ class TimelineWindow(ChildWindow):
 
         self._rejected_item.setData(
             [r["time"] for r in st.rejected], [LANE_REJECTED] * len(st.rejected),
-            data=[f"t={r['time']} {r['reject_reason']}" for r in st.rejected])
+            data=[tr("timeline.rejected_tip", time=r["time"],
+                     reason=r["reject_reason"]) for r in st.rejected])
         self._rejected_item.setVisible(self.session.show_rejected)
         self._pw.addItem(self._rejected_item)
 
@@ -533,11 +565,11 @@ class TimelineWindow(ChildWindow):
                          s["cut_area_threshold"])
         for series, thr, lane, full, color, label in (
                 (s["anchor"], ath, LANE_ANCHOR, ANCHOR_FULL, (90, 160, 255),
-                 f"{ath} ↑ 넘으면"),
+                 tr("timeline.thr_anchor", value=ath)),
                 (s["rate"], rth, LANE_RATE, RATE_FULL, (255, 160, 60),
-                 f"{rth} ↓ 내려가면"),
+                 tr("timeline.thr_rate", value=rth)),
                 (s["area"], cth, LANE_AREA, AREA_FULL, (190, 130, 255),
-                 f"{cth} ↑ 넘으면 컷")):
+                 tr("timeline.thr_area", value=cth))):
             lo, hi = lane
             self._pw.addItem(pg.PlotDataItem(
                 times, lo + (hi - lo) * np.clip(series / (full * thr), 0, 1),
@@ -554,9 +586,9 @@ class TimelineWindow(ChildWindow):
         flags = self.session.flags.flags
         self._flags_item.setData(
             [f["time"] for f in flags], [LANE_FLAGS] * len(flags),
-            data=[f"GT {fmt_time(f['time'])}"
-                  + (f" — {f['note']}" if f.get("note") else "")
-                  + "  (⇧클릭 = 삭제)" for f in flags])
+            data=[tr("timeline.flag_tip", clock=fmt_time(f["time"]),
+                     note=f" — {f['note']}" if f.get("note") else "")
+                  for f in flags])
 
     def _on_flags_changed(self) -> None:
         self._update_flags()
@@ -575,7 +607,8 @@ class TimelineWindow(ChildWindow):
         t = float(vb.mapSceneToView(scene_pos).x())
         st = self.session.store
         if not 0 <= t <= st.duration:
-            self._readout.setText("<span style='color:#777'>영상 범위 밖</span>")
+            self._readout.setText(
+                f"<span style='color:#777'>{tr('timeline.out_of_range')}</span>")
             return
 
         parts = [f"<b>t={t:.2f}</b> ({fmt_time(t)})"]
@@ -583,7 +616,9 @@ class TimelineWindow(ChildWindow):
         if i is not None and st.frames:
             f = st.frames[i]
             marks = "".join(_swatch(SOURCE_COLORS.get(s, (150, 150, 150))) for s in f["sources"])
-            parts.append(f"{marks} 프레임 #{i} t={f['time']} · {'+'.join(f['sources'])}")
+            parts.append(marks + " " + tr(
+                "timeline.hover_frame", index=i, time=f["time"],
+                sources="+".join(source_label(s) for s in f["sources"])))
         j = st.segment_index_at(t)
         if j is not None:
             text = st.segments[j]["text"].strip()
@@ -591,16 +626,14 @@ class TimelineWindow(ChildWindow):
         sv = st.series_at(t)
         if sv is not None:
             anchor_d, rate, area = sv
-            ath = st.series["anchor_threshold"]
-            rate_th = st.series["rate_threshold"]
-            cth = st.series["cut_area_threshold"]
-            parts.append(
-                f"<span style='color:#6af'>anchor {anchor_d:.4f}</span>"
-                f"{'↑' if anchor_d > ath else ''} · "
-                f"<span style='color:#fa6'>순간 {rate:.6f}</span>"
-                f"{'' if rate > rate_th else '↓'} · "
-                f"<span style='color:#b8f'>면적 {area:.4f}</span>"
-                f"{'↑' if area > cth else ''}")
+            parts.append(tr(
+                "timeline.hover_signals",
+                anchor=anchor_d,
+                anchor_mark="↑" if anchor_d > st.series["anchor_threshold"] else "",
+                rate=rate,
+                rate_mark="" if rate > st.series["rate_threshold"] else "↓",
+                area=area,
+                area_mark="↑" if area > st.series["cut_area_threshold"] else ""))
         self._readout.setText(" &nbsp;|&nbsp; ".join(parts))
 
     # ---------- 동기 ----------
@@ -646,7 +679,7 @@ class TimelineWindow(ChildWindow):
         return best
 
     def _on_mark_jumped(self, _kind: str, description: str) -> None:
-        self._readout.setText(f"<span style='color:#8cf'>▸ {description}</span>")
+        self._readout.setText(tr("timeline.jumped", description=description))
 
     def scrub_drag(self, ev, t: float) -> None:
         """뷰박스 위 좌드래그 = 재생 위치 실시간 이동."""

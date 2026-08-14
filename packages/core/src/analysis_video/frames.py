@@ -32,7 +32,7 @@ import numpy as np
 from PIL import Image
 from skimage.metrics import structural_similarity as ssim
 
-from . import media
+from . import budget, media
 from .detect import adaptive, events as events_mod, overlay, signals
 from .errors import log
 
@@ -40,13 +40,40 @@ from .errors import log
 ADAPTIVE_SCHEMA = "adaptive/2"
 # 컷 면적(cut_area)을 전환 검출에 도입하고 cum_* → anchor_* 로 개명한 이후의
 # anchor 캐시. v1에는 area_series가 아예 없고 키 이름도 달라 재사용이 불가능하다.
-SIGNALS_SCHEMA = "signals/1"
+#
+# /1 → /2: anchor_resets(앵커가 옮겨 간 프레임 번호들)를 함께 담는다.
+# signals.measure는 이 값을 **원래 계산하고 있었는데** 캐시에 담지 않아 버려졌고,
+# 그것을 그리려던 debug-report는 있지도 않은 칸(events["anchor_idx"])을 짚다가
+# 매번 KeyError로 죽었다 — 즉 이 캐시가 값을 흘린 것이 그 고장의 뿌리다.
+SIGNALS_SCHEMA = "signals/2"
 
 # 세 신호의 기준선 기본값. CLI가 이 값을 그대로 읽어 쓴다 — 두 군데 적으면
 # 한쪽만 고쳤을 때 "기본값이라고 표시된 값"과 "실제로 쓰이는 값"이 갈린다.
 DEFAULT_ANCHOR_THRESHOLD = 0.02
 DEFAULT_RATE_THRESHOLD = 0.0015
 DEFAULT_CUT_AREA_THRESHOLD = 0.002
+
+# 이미지 수를 줄여야 할 때 **먼저 올릴 값**. 기본값이 아니다 — 플래그 없이 부른
+# 실행은 위의 DEFAULT_*를 그대로 쓴다. 이것은 "예산이 모자라면 이걸 이만큼
+# 올려라"라는 권고이고, SKILL.md와 agent-guide가 같은 상수에서 주입받는다.
+#
+# 근거는 영상 6편 × 격자 13점 = 78런 스윕 실측이다. 세 임계를 각각 올려 보면
+# 듣는 것은 컷 면적 하나뿐이었다(감소폭 / 시각 회수율 = 기본 임계로 뽑힌 프레임
+# 중 상향 후에도 SSIM>=0.9인 것이 남아 있는 비율):
+#
+#   --cut-area-threshold 0.002 → 0.010 : 이미지 17~43% 감소, 회수율 95.2~100%
+#   --anchor-threshold   0.02  → 0.08  : 1~15% 감소인데 회수율이 83%까지 떨어진다
+#   --rate-threshold     상향          : 이미지가 **오히려 늘어난다**(-8~+2%)
+#
+# rate가 역효과인 이유는 그 값이 "순간 변화 감지"와 "화면이 정착했다" 판정을
+# 겸하기 때문이다 — 올리면 정착 판정이 헐거워져 더 이른 시각을 촬영한다.
+# 세 값을 함께 올린 결합 프리셋은 cut 단독보다 회수율이 낮으면서 감소폭은
+# 비슷해 파레토 열세였다.
+#
+# 자동으로 정하지 않는다: 적응형 임계 산출은 실측 3종(누적합·롤링중앙값·
+# 롤링상위백분위) 전부 실패했고, 최적점이 영상마다 다르다(판서 영상은 0.020에서도
+# 회수율 100%, 애니메이션 영상은 같은 값에서 89%로 떨어진다).
+RECOMMENDED_CUT_AREA_THRESHOLD = 0.010
 
 # 앵커를 언제 옮길지는 anchor_diff 신호의 내부 사정이라 사용자 임계와 분리한다.
 # 판단(events)의 임계를 바꿔도 측정 캐시가 무효화되지 않게 하는 것이 목적이다.
@@ -96,6 +123,7 @@ def _cached_signals(video_path: Path, out_dir: Path) -> dict:
                 "anchor_series": data["anchor_series"],
                 "rate_series": data["rate_series"],
                 "area_series": data["area_series"],
+                "anchor_resets": data["anchor_resets"],
                 "row_change_freq": data["row_change_freq"],
             }
         log("[frames] 신호 측정 캐시가 구버전 — 다시 측정합니다")
@@ -116,6 +144,9 @@ def _cached_signals(video_path: Path, out_dir: Path) -> dict:
         cache, schema=SIGNALS_SCHEMA, fps=r["fps"], band=np.array(band),
         time_series=r["time_series"], anchor_series=r["anchor_series"],
         rate_series=r["rate_series"], area_series=r["area_series"],
+        # 앵커가 옮겨 간 지점. 이것이 없으면 anchor_series의 톱니가 "화면이
+        # 돌아왔다"인지 "기준이 바뀌었다"인지 그래프에서 구분되지 않는다.
+        anchor_resets=np.array(r["anchor_resets"], dtype=np.int64),
         row_change_freq=freq)
     return r
 
@@ -152,6 +183,7 @@ def build_frames(video_path: Path, out_dir: Path, *,
                  anchor_threshold: float = DEFAULT_ANCHOR_THRESHOLD,
                  rate_threshold: float = DEFAULT_RATE_THRESHOLD,
                  cut_area_threshold: float = DEFAULT_CUT_AREA_THRESHOLD,
+                 read_long_edge: int = budget.READ_LONG_EDGE,
                  blank_area_threshold: float = 0.001,
                  pair_dup_threshold: float = 0.93) -> dict:
     """out_dir = 이 분석 단위의 디렉터리, cache_dir = 검출 캐시를 둘 곳.
@@ -164,8 +196,12 @@ def build_frames(video_path: Path, out_dir: Path, *,
     cache_dir = cache_dir if cache_dir is not None else out_dir
     frames_dir = out_dir / "frames"
     rejected_dir = frames_dir / "rejected"
+    read_dir = out_dir / budget.READ_DIRNAME
     frames_dir.mkdir(parents=True, exist_ok=True)
-    rejected_dir.mkdir(parents=True, exist_ok=True)
+    read_dir.mkdir(parents=True, exist_ok=True)
+    # rejected/는 **탈락이 실제로 생겼을 때** 만든다. 미리 만들어 두면 탈락 0건인
+    # 분석에도 빈 디렉터리가 남아, 산출물 개수를 세어 확인하려는 소비자에게
+    # frames/의 항목이 이미지 수보다 하나 많게 보인다(실제로 오인된 사례가 있다).
 
     duration = media.get_duration(video_path)
     w_start, w_end = window if window is not None else (0.0, duration)
@@ -227,6 +263,7 @@ def build_frames(video_path: Path, out_dir: Path, *,
     log(f"[frames] 후보 {len(candidates)}건 추출·게이트 판정 중...")
     records: list[dict] = []
     accepted: list[dict] = []
+    read_sizes: list[tuple[int, int]] = []
 
     def gate(c: dict, img: Path) -> None:
         """추출→내용량 게이트. 판정을 c에 기록하고 records/accepted를 갱신한다.
@@ -235,23 +272,34 @@ def build_frames(video_path: Path, out_dir: Path, *,
         같은 화면이 두 번 나와도 지울 이유가 없고, 무엇보다 그 게이트는 먼저 온
         것을 남기고 **나중 것을 버려서** 판서가 더 진행된 최신 상태를 잃었다.
         내용량 판정은 오버레이 띠를 뺀 본문에서 한다.
+
+        읽기용 사본은 추출과 같은 디코드에서 함께 나오지만, **탈락하면 지운다** —
+        read/에 남은 장수가 곧 "다 열면 얼마인가"의 분모이므로 아무도 참조하지
+        않는 사본이 섞이면 그 숫자가 거짓이 된다.
         """
         c["image"] = img.relative_to(out_dir).as_posix()
-        if not media.extract_frame(video_path, c["time"], img):
+        read_img = read_dir / img.name
+        size = media.extract_frame(video_path, c["time"], img,
+                                   reduced=(read_img, read_long_edge))
+        if size is None:
             c.update(status="rejected", reject_reason="extract-failed", image=None)
+            read_img.unlink(missing_ok=True)
             records.append(c)
             return
         area = overlay.content_area(overlay.crop(_gray_for_compare(img), band))
         c["yavg"] = round(media.yavg(img), 2)
         c["content_area"] = round(area, 4)
         if area <= blank_area_threshold:
+            rejected_dir.mkdir(parents=True, exist_ok=True)
             dst = rejected_dir / img.name
             img.rename(dst)
+            read_img.unlink(missing_ok=True)
             c.update(status="rejected", reject_reason=f"blank(<={blank_area_threshold})",
                      image=dst.relative_to(out_dir).as_posix())
             records.append(c)
             return
         c["status"] = "accepted"
+        read_sizes.append(size)
         accepted.append(c)
         records.append(c)
 
@@ -261,15 +309,18 @@ def build_frames(video_path: Path, out_dir: Path, *,
 
     records.sort(key=lambda r: r["time"])
 
-    log(f"[frames] 완료: 채택 {len(accepted)}건 / 탈락 {len(records) - len(accepted)}건")
+    images = budget.summary(read_sizes, read_long_edge)
+    log(f"[frames] 완료: 채택 {len(accepted)}건 / 탈락 {len(records) - len(accepted)}건 "
+        f"— 읽기용 사본 {images['count']}장 ≈ {images['tokens']:,}토큰")
     in_window = [e for e in found if w_start <= e["time"] <= w_end]
     return {
         "records": records, "duration": duration, "fps": fps,
         "window": [round(w_start, 2), round(w_end, 2)],
-        "events": in_window,
+        "events": in_window, "images": images,
         "params": {
             "anchor_threshold": anchor_threshold, "rate_threshold": rate_threshold,
             "cut_area_threshold": cut_area_threshold,
+            "read_long_edge": read_long_edge,
             "blank_area_threshold": blank_area_threshold,
             "pair_dup_threshold": pair_dup_threshold,
             "body_band": [round(band[0], 3), round(band[1], 3)],

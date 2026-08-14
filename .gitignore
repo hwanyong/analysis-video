@@ -3,9 +3,16 @@ __pycache__/
 *.pyc
 *.egg-info/
 dist/
+dist-release/
 build/
+.pytest_cache/
 .DS_Store
 testdata/
 debug_out/
 *.analysis/
-.claude/settings.local.json
+# 개인 도구 상태 — 공개 저장소에 실려 나가면 안 된다.
+# 프로젝트로 공유할 설정(.claude/settings.json 등)이 생기면 그때 예외로 열 것.
+.claude/
+
+# 세션용 재현 스크립트 — 이 저장소에 없는 testdata/ 를 읽으므로 클론한 사람은 돌릴 수 없다.
+verify.sh

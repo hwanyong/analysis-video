@@ -1,0 +1,55 @@
+1
+00:00:00,400 --> 00:00:02,700
+This clip was drawn by a script, so it is free to share.
+
+2
+00:00:02,900 --> 00:00:04,800
+It shows what analysis-video pulls out of a lecture.
+
+3
+00:00:05,200 --> 00:00:07,600
+A recording is thousands of frames that are nearly all the same.
+
+4
+00:00:07,800 --> 00:00:09,800
+And a transcript that never says what was on screen.
+
+5
+00:00:10,200 --> 00:00:12,800
+So the tool works in four moves, and I will write them out.
+
+6
+00:00:13,000 --> 00:00:15,600
+Watch the board. Nothing here is a cut, the picture only grows.
+
+7
+00:00:15,800 --> 00:00:18,400
+Every frame is almost identical to the one before it.
+
+8
+00:00:18,600 --> 00:00:21,400
+A detector that only hunts for cuts would keep this empty board.
+
+9
+00:00:21,600 --> 00:00:24,600
+So a second signal measures the drift away from where it started.
+
+10
+00:00:24,800 --> 00:00:28,400
+And when the screen finally leaves, it is shot again, finished.
+
+11
+00:00:29,200 --> 00:00:31,600
+Each screen becomes one section of a Markdown file.
+
+12
+00:00:31,800 --> 00:00:34,600
+The seconds it was up, its images, and the words spoken over it.
+
+13
+00:00:35,200 --> 00:00:37,600
+You can rebuild this clip and rerun the whole pipeline yourself.
+
+14
+00:00:37,800 --> 00:00:40,600
+One command, no network, nothing but the file on your disk.

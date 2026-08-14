@@ -7,34 +7,24 @@
 활성 창이 `handle_shortcut(ev) -> bool`을 노출하면 전역 처리보다 먼저 기회를
 준다(타임라인의 Space 홀드-이동, 도구 전환 등 창 문맥 전용 키). 이때만 키 뗌
 이벤트도 전달된다 — 홀드 방식 조작에는 뗌이 필수다.
+
+한글 입력 상태에서도 같은 키가 같은 동작을 하려면 두 가지가 다 필요하다.
+
+  ① 키를 문자가 아니라 **자리**로 볼 것 — `keys.physical_key` 참조.
+  ② 키가 애초에 여기까지 **도달할 것**. macOS는 포커스 위젯이 입력기를 켜 두면
+     (`WA_InputMethodEnabled`) 키를 IME에 먼저 넘기고, 한글 IME는 자모 조합을
+     시작하며 그것을 삼킨다 — 이벤트 필터는 아무것도 못 본다. 지금은 이 조건이
+     저절로 만족된다(실측): 이 앱이 쓰는 QListWidget·QTableWidget은 그 속성을
+     켜지 않고, 켜는 것은 콤보박스 팝업의 QListView뿐인데 팝업이 떠 있으면
+     어차피 아래에서 양보한다. 저절로 만족될 뿐 보장은 아니라서 — 맨 QListView나
+     QTextBrowser를 하나 넣으면 그 창에서만 조용히 깨진다 — 테스트로 못박는다:
+     `test_only_text_inputs_keep_the_input_method_on`.
 """
 from PySide6.QtCore import QEvent, QObject, Qt
 from PySide6.QtWidgets import QAbstractSpinBox, QApplication, QLineEdit, QPlainTextEdit, QTextEdit
 
+from .keys import physical_key
 from .playback import RATES
-
-SHORTCUT_HELP = """\
-[재생]                              [마크로 정확히 이동]
-Space / K      재생 · 일시정지          ↓ / ↑      다음/이전 마크 (켜 둔 종류 전부)
-← / →          5초 뒤로/앞으로          N / ⇧N     다음/이전 채택 프레임
-J / L          10초 뒤로/앞으로         G / ⇧G     다음/이전 GT 플래그
-, / .          프레임 단위 스텝
-⇧, / ⇧.        배속 내림/올림           R          탈락 후보 숨김/표시
-0~9            0~90% 지점으로 점프      F          GT 플래그 추가/제거(토글)
-Home/End       처음/끝                  ?          이 도움말
-M              음소거
-
-↓/↑가 훑는 종류는 타임라인 범례의 체크박스로 고릅니다(STT 세그먼트는 592건이라
-기본 제외). 타임라인 클릭도 가까운 마크에 달라붙고, 점프하면 화면 밖으로 나간
-재생 커서를 뷰포트가 따라갑니다.
-
-GT 플래그 = "이 장면은 반드시 뽑혔어야 한다"는 사람의 정답 표시. 로직 검출과
-대조해 ⑥ 비교 리포트가 recall(놓친 것)·precision(군더더기)을 계산합니다.
-같은 자리에서 F를 다시 누르거나 타임라인의 ▼를 ⇧클릭하면 취소됩니다.
-
-플레이어 슬라이더·타임라인은 드래그하는 동안 화면이 실시간으로 따라옵니다.
-타임라인 전용:  V 스크럽 · H 이동 · Z 확대 도구 / Space 홀드+드래그 = 임시 이동
-                휠 = 확대·축소 (도구 막대의 배율 슬라이더·＋－·⤢ 전체 보기)"""
 
 _EDIT_WIDGETS = (QLineEdit, QTextEdit, QPlainTextEdit, QAbstractSpinBox)
 
@@ -60,7 +50,7 @@ class ShortcutRouter(QObject):
         fw = QApplication.focusWidget()
         if isinstance(fw, _EDIT_WIDGETS):
             if active is None or fw.window() is active:
-                if press and ev.key() == Qt.Key.Key_Escape:
+                if press and physical_key(ev) == Qt.Key.Key_Escape:
                     fw.clearFocus()  # 편집 종료 → 단축키 복귀
                     return True
                 return False
@@ -78,14 +68,9 @@ class ShortcutRouter(QObject):
     def _dispatch(self, ev) -> bool:
         s = self.session
         e = s.engine
-        key = ev.key()
+        key = physical_key(ev)   # 자리 기준 — Shift 변형(<, >, ?)도 여기서 접힌다
         shift = bool(ev.modifiers() & Qt.KeyboardModifier.ShiftModifier)
         repeat = ev.isAutoRepeat()
-
-        # Shift+구두점은 OS가 시프트 문자로 전달한다(, → <, . → >)
-        if key in (Qt.Key.Key_Less, Qt.Key.Key_Greater):
-            self._rate_step(-1 if key == Qt.Key.Key_Less else +1)
-            return True
 
         if key in (Qt.Key.Key_Space, Qt.Key.Key_K):
             if not repeat:
@@ -143,7 +128,7 @@ class ShortcutRouter(QObject):
             if not repeat:
                 s.flags.toggle(e.position())  # 같은 자리에서 다시 누르면 취소
             return True
-        if key == Qt.Key.Key_Question:
+        if key == Qt.Key.Key_Slash and shift:   # ⇧/ = ? (도움말 표기와 일치)
             if not repeat:
                 s.show_shortcut_help()
             return True

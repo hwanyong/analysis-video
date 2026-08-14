@@ -10,14 +10,14 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QLabel, QScrollArea, QVBoxLayout, QWidget
 
-from ..session import Session
+from ..i18n import tr
+from ..session import Session, source_label
 from . import ChildWindow, fmt_time
 
 
 class FrameSyncWindow(ChildWindow):
     def __init__(self, session: Session):
-        super().__init__()
-        self.session = session
+        super().__init__(session)
         self.resize(560, 640)
         self._idx: int | None = -1  # -1 = 미초기화 (None과 구분)
         self._pixmaps: dict[str, QPixmap] = {}
@@ -48,6 +48,10 @@ class FrameSyncWindow(ChildWindow):
     def _on_show_rejected(self, _show: bool) -> None:
         self._refresh()
 
+    def retranslate(self) -> None:
+        """표시 내용이 전부 _render()가 조립하는 문장이라 다시 그리면 끝난다."""
+        self._refresh()
+
     # ---------- 갱신 ----------
 
     def _on_pos(self, t: float) -> None:
@@ -76,7 +80,7 @@ class FrameSyncWindow(ChildWindow):
         if self._idx is None or not st.frames:
             self._current_pm = None
             self._image.clear()  # setText 뒤 setPixmap()은 문구를 지운다 — 순서 주의
-            self._image.setText("이 구간에 채택된 프레임 없음\n(첫 프레임 이전이거나 metadata 없음)")
+            self._image.setText(tr("fsync.no_frame"))
             self._meta.setText("")
             return
         f = st.frames[self._idx]
@@ -85,33 +89,37 @@ class FrameSyncWindow(ChildWindow):
         self._apply_scaled()
 
         parts = [
-            f"<b>t={f['time']}</b> ({fmt_time(f['time'])}) &nbsp; "
-            f"구간 {f['interval'][0]}~{f['interval'][1]}초 &nbsp; yavg {f.get('yavg')}",
-            f"<b>검출:</b> {' + '.join(f['sources'])}",
+            tr("fsync.head", time=f["time"], clock=fmt_time(f["time"]),
+               start=f["interval"][0], end=f["interval"][1], yavg=f.get("yavg")),
+            tr("fsync.detected",
+               sources=" + ".join(source_label(s) for s in f["sources"])),
             f"<span style='color:gray'>{f['image']}</span>",
         ]
         for r in f.get("reasons", []):
-            parts.append(f"★ <b>reason:</b> {r}")
+            parts.append(tr("fsync.reason", reason=r))
         for td in f.get("trigger_dialogue", []):
-            parts.append(f"▸ <b>트리거 대사</b> ({fmt_time(td['start'])}): {td['text']}")
-        parts.append(f"<b>구간 대사:</b> {len(f.get('dialogue', []))}건 — 대사 싱크 창 참조")
+            parts.append(tr("fsync.trigger_dialogue", clock=fmt_time(td["start"]),
+                            text=td["text"]))
+        parts.append(tr("fsync.dialogue_count", count=len(f.get("dialogue", []))))
 
         if self.session.show_rejected:
             rej = st.rejected_in(f["interval"][0], f["interval"][1])
             if rej:
-                parts.append("<hr><b>이 구간의 탈락 후보</b> (R로 숨김):")
+                parts.append(tr("fsync.rejected_head"))
                 for r in rej:
-                    reasons = "".join(f" ★{x}" for x in r.get("reasons", []))
-                    parts.append(
-                        f"<span style='color:#a55'>✗ t={r['time']} — "
-                        f"{r['reject_reason']}{reasons}</span>")
+                    # reject_reason은 파이프라인이 조립한 진단 코드(`blank(<=0.002)`)라
+                    # 번역하려면 GUI가 그 문자열 형식을 파싱해야 한다 — 원문 그대로 둔다
+                    parts.append(tr(
+                        "fsync.rejected_item", time=r["time"],
+                        reason=r["reject_reason"],
+                        extra="".join(f" ★{x}" for x in r.get("reasons", []))))
         self._meta.setText("<br>".join(parts))
 
     def _apply_scaled(self) -> None:
         pm = self._current_pm
         if pm is None:
             self._image.clear()
-            self._image.setText("이미지 파일 없음")
+            self._image.setText(tr("fsync.no_image"))
             return
         self._image.setPixmap(pm.scaled(
             self._image.size(), Qt.AspectRatioMode.KeepAspectRatio,

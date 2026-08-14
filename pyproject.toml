@@ -2,15 +2,40 @@
 members = ["packages/*"]
 
 [dependency-groups]
-dev = ["pytest>=8.0"]
+# pyyaml: test_install_skill 이 생성된 SKILL.md 의 YAML 머리말을 파싱해 검사한다.
+# 지금은 [stt] extra 의 상류(huggingface-hub 계열)를 타고 딸려 오지만, 그것은
+# 우연이다 — extra 를 빼고 동기화하는 순간 수집이 ImportError 로 죽는다.
+dev = ["pytest>=8.0", "pyyaml>=6"]
 
 [tool.pytest.ini_options]
 testpaths = ["packages/gui/tests", "packages/core/tests"]
+# 두 패키지의 tests/ 는 서로 남남인데, 기본 import 모드(prepend)는 __init__.py 없는
+# 테스트 파일을 **파일명 그대로** 최상위 모듈로 올린다. 그래서 core 와 gui 가 각자
+# 자기 모듈 이름을 딴 같은 이름의 테스트 파일을 두는 순간(예: 양쪽의 origin.py →
+# 양쪽의 test_origin.py) 두 번째 파일이 "import file mismatch"로 수집 자체가 멈춘다.
+# CI 는 두 디렉터리를 따로 돌려 이 충돌을 못 보지만 개발자의 `pytest` 한 번은 통째로
+# 죽는다. importlib 모드는 모듈 이름을 경로에서 만들어 두 파일을 구분하므로,
+# 파일명을 서로 눈치 보며 짓지 않아도 된다 — 테스트는 검사 대상 모듈의 이름을 따는
+# 것이 맞다. 대안(tests 를 패키지로 만들거나 한쪽 이름을 비트는 것)은 워크스페이스에
+# 멤버가 늘 때마다 같은 문제가 다시 나온다.
+addopts = "--import-mode=importlib"
 
 [tool.uv]
 override-dependencies = [
-    # 결정 A10: torch 배제 — mlx-whisper 0.4.x가 의존 선언하지만 전사 런타임에서 미사용.
+    # torch 배제 — mlx-whisper 0.4.x가 의존으로 선언하지만 전사 런타임에서 쓰이지 않는다.
     # 주의: 이 override는 uv workspace 안에서만 유효 — pip 최종 사용자는 torch가 설치됨
     # (업스트림 이슈, packages/core/README 한계 참조)
     "torch; sys_platform == 'never'",
 ]
+
+# 주의: 아래 표는 [tool.uv] 의 직접 키보다 뒤에 있어야 한다. 앞에 두면 TOML이
+# override-dependencies 를 이 표 안으로 빨아들인다.
+#
+# GUI가 개발 중에 PyPI 대신 packages/core 를 쓰게 하는 선언. 반드시 여기(워크스페이스
+# 루트)에 있어야 하며 packages/gui/pyproject.toml 에 두면 안 된다 — 멤버 쪽에 두면
+# 그 폴더를 워크스페이스 밖에서 설치할 때 uv가 이 선언을 지키려 들고
+# "references a workspace ... but is not a workspace member" 로 실패한다.
+# 설치 스모크가 정확히 그 경로(폴더 복사 후 설치)라 CI가 통째로 막힌다.
+# 색인(PyPI)에서 받는 소비자에게는 원래 무해하다 — uv는 의존성 쪽 sources를 읽지 않는다.
+[tool.uv.sources]
+analysis-video = { workspace = true }

@@ -1,15 +1,62 @@
 [project]
 name = "analysis-video-gui"
 version = "0.1.0"
-description = "analysis-video 산출물 검토·교정용 디버깅 GUI — 허브 + 독립 멀티 윈도우"
+# 이 한 줄이 PyPI 검색 결과에 그대로 노출된다 — 국제 색인이므로 영어로 쓴다.
+description = "Desktop GUI for reviewing analysis-video output and tuning scene-change detection"
+readme = "README.md"
 requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "UHD", email = "yoo.hwanyong@gmail.com" }]
+keywords = ["video", "video-analysis", "gui", "qt", "pyside6",
+            "scene-detection", "keyframe-extraction", "transcription",
+            "lecture", "screencast", "debugging-tool"]
+# License:: 분류자는 넣지 않는다 — PEP 639의 license 필드와 함께 쓰면 업로드가 거부된다.
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: X11 Applications :: Qt",
+    "Intended Audience :: Developers",
+    # UI 언어 3종 (i18n.LANGUAGES = ko/en/ja, 허브에서 실행 중 전환)
+    "Natural Language :: English",
+    "Natural Language :: Japanese",
+    "Natural Language :: Korean",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Multimedia :: Video",
+    "Topic :: Software Development :: Quality Assurance",
+]
 dependencies = [
-    "analysis-video",
-    "PySide6>=6.6",
+    # 코어와 짝을 맞춘다 — metadata.json/state.json 스키마가 메이저에서 깨질 수 있으므로
+    # 상한 없이 두면 잘못된 코어와 조합될 수 있다.
+    # 주의: 이 상한은 uv workspace 안에서는 강제되지 않는다(잠금이 지정자를 버린다) —
+    # git+/PyPI 설치에서만 효력이 있다.
+    "analysis-video>=0.1,<0.2",
+    # PySide6(껍데기 패키지)가 아니라 Essentials 를 직접 지정한다.
+    # PySide6 = pyside6-essentials + pyside6-addons 인데, 우리가 import 하는 Qt 모듈은
+    # QtCore·QtGui·QtWidgets 셋뿐이고 전부 essentials 소유다. addons(설치 후 884MB)는
+    # 한 줄도 쓰지 않는다 — 그 안의 QtMultimedia 는 AV1 디코드 실패로 이미 버렸다
+    # (playback.py 참조). 설치본 1.23GB → 333MB, 다운로드 443MB → 111MB.
+    # 검증: addons 미설치 환경에서 GUI 테스트 전부 통과(현재 121개).
+    "PySide6-Essentials>=6.6",
     "pyqtgraph>=0.13.7",
     "sounddevice>=0.4.6",
     "numpy>=1.26",
 ]
+
+# 주의: 하위 테이블([project.urls] 등)은 [project]의 모든 키 뒤에 와야 한다 —
+# TOML은 테이블을 열면 이후 키를 전부 그 테이블에 넣으므로, 위에 두면
+# dependencies가 urls 안으로 흡수되어 빌드가 실패한다.
+[project.urls]
+Homepage = "https://github.com/hwanyong/analysis-video"
+Repository = "https://github.com/hwanyong/analysis-video"
+Issues = "https://github.com/hwanyong/analysis-video/issues"
+Documentation = "https://github.com/hwanyong/analysis-video/blob/main/packages/gui/README.md"
 
 [project.scripts]
 analysis-video-gui = "analysis_video_gui.app:main"
@@ -21,5 +68,7 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/analysis_video_gui"]
 
-[tool.uv.sources]
-analysis-video = { workspace = true }
+# [tool.uv.sources] 를 여기에 두지 말 것.
+# 개발 중 packages/core 를 쓰게 하는 선언은 워크스페이스 루트 pyproject.toml 에 있다.
+# 여기에 두면 이 폴더를 워크스페이스 밖에서 설치할 때(설치 스모크가 하는 일) uv가
+# 워크스페이스를 찾다 실패한다. 이 파일은 그 자체로 완결돼 있어야 한다.

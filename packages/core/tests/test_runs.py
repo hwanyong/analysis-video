@@ -55,7 +55,7 @@ def test_window_and_label():
 
 def test_index_accumulates_and_drops_dead_units(tmp_path):
     """나중에 구간을 더 분석해도 앞서 만든 단위가 목록에서 사라지면 안 되고,
-    디렉터리가 지워진 단위는 목록에도 남으면 안 된다(미배선 방지)."""
+    디렉터리가 지워진 단위는 목록에도 남으면 안 된다(끊어진 참조 방지)."""
     for n in ("full", "a"):
         (tmp_path / "runs" / n).mkdir(parents=True)
     runs.merge_index(tmp_path, [{"name": "full", "range": None}])

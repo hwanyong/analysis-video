@@ -79,11 +79,17 @@ def render(out_dir: Path, title: str, unit_dir: Path | None = None) -> Path:
                  label=f"anchor_threshold={anchor_threshold}")
 
     for e in events:
-        start = e["time"]
-        end = e["after_time"]
-        ax_v.axvspan(start, end, color="orange", alpha=0.15)
-        ax_v.plot(e.get("anchor_time", e["anchor_idx"] / fps), 0,
-                  marker="v", color="blue", ms=7, zorder=5)
+        ax_v.axvspan(e["time"], e["after_time"], color="orange", alpha=0.15)
+
+    # 앵커가 옮겨 간 지점. **사건과 다른 것이다** — 앵커 이동은 anchor_diff라는
+    # 신호의 내부 사정이고(signals.measure), 사건은 세 신호의 판정 결과다.
+    # 이걸 그려야 anchor_series의 톱니가 "화면이 돌아왔다"인지 "기준이 바뀌었다"인지
+    # 구분된다. 전에는 이 값을 events에서 찾았는데 거기 있었던 적이 없어
+    # (dict.get의 기본값이 즉시 평가되어) 이 명령 자체가 매번 KeyError로 죽었다.
+    resets = data["anchor_resets"] if "anchor_resets" in data else np.zeros(0, dtype=int)
+    for idx in resets:
+        i = min(int(idx), n - 1)
+        ax_v.plot(times[i], 0, marker="v", color="blue", ms=7, zorder=5)
 
     for i, r in enumerate(records):
         idx = min(int(np.searchsorted(times, r["time"])), n - 1)

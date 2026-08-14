@@ -15,8 +15,7 @@ DIM = QColor(140, 140, 140)
 
 class DialogueSyncWindow(ChildWindow):
     def __init__(self, session: Session):
-        super().__init__()
-        self.session = session
+        super().__init__(session)
         self.resize(460, 720)
         self._idx: int | None = None
 
@@ -30,6 +29,11 @@ class DialogueSyncWindow(ChildWindow):
         self.bind(session.engine.positionChanged, self._on_pos)
         self.bind(session.store.reloaded, self._populate)
         self._populate()
+
+    def retranslate(self) -> None:
+        """번역할 것이 없다 — 이 창이 내보내는 글자는 전부 원본 대사(전사 결과)와
+        시각이고, 창 제목은 세션이 갈아 끼운다. 빈 구현을 명시해 '빠뜨린 창'과
+        '번역할 것이 없는 창'을 구분한다."""
 
     def _on_item_clicked(self, item) -> None:
         self.session.engine.seek(item.data(Qt.ItemDataRole.UserRole))

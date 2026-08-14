@@ -9,6 +9,7 @@ from PySide6.QtGui import QImage, QPainter
 from PySide6.QtWidgets import (QComboBox, QHBoxLayout, QLabel, QPushButton, QSlider,
                                QStyle, QStyleOptionSlider, QVBoxLayout, QWidget)
 
+from ..i18n import tr
 from ..playback import RATES
 from ..session import Session
 from . import ChildWindow, fmt_time
@@ -81,8 +82,7 @@ class SeekSlider(QSlider):
 
 class PlayerWindow(ChildWindow):
     def __init__(self, session: Session):
-        super().__init__()
-        self.session = session
+        super().__init__(session)
         e = session.engine
         self.resize(960, 620)
 
@@ -130,7 +130,6 @@ class PlayerWindow(ChildWindow):
         self._slider = SeekSlider(Qt.Orientation.Horizontal)
         self._slider.setRange(0, int(e.duration * 1000))
         self._slider.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._slider.setToolTip("드래그하면 화면이 실시간으로 따라옵니다")
         self._slider.sliderPressed.connect(e.begin_scrub)
         self._slider.sliderReleased.connect(e.end_scrub)
         # valueChanged로 받으면 드래그·그루브 클릭·휠이 한 경로로 들어온다.
@@ -143,6 +142,13 @@ class PlayerWindow(ChildWindow):
         self.bind(e.stateChanged, self._on_state)
         self.bind(e.mutedChanged, self._on_muted)
         self.bind(e.rateChanged, self._on_rate)
+        self.retranslate()
+
+    def retranslate(self) -> None:
+        """트랜스포트 버튼은 기호·키 이름이라 번역 대상이 아니다 — 설명만 갈아 끼운다."""
+        self._slider.setToolTip(tr("player.slider_tip"))
+        self._rate.setToolTip(tr("player.rate_tip"))
+        self._mute.setToolTip(tr("player.mute_tip"))
 
     def _on_frame(self, img: QImage, pts: float) -> None:
         self.video.set_image(img)

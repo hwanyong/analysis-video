@@ -1,0 +1,331 @@
+name: release
+
+# core-v<버전> / gui-v<버전> 태그를 밀면 해당 패키지를 PyPI에 올리고
+# 같은 이름으로 GitHub 릴리스를 만든다.
+# 두 패키지는 버전이 독립이라 태그 계열도 둘이다.
+#
+# 패키지별로 이 파일을 복사하지 않는다 — 메타데이터 게이트가 두 벌이 되면
+# 한쪽만 낡아서, 통과했는데 잘못된 배포물이 나가는 사고가 난다.
+# 대상은 태그 접두사(또는 수동 실행 입력)로 정하고 검사는 한 곳에만 둔다.
+#
+# Trusted Publishing(OIDC 기반, 토큰 없는 게시)이라 비밀값이 없다. 활성화 전제 —
+# **두 프로젝트 각각**에 대해 계정 사이드바의 pending publisher(발행 대기 게시자)
+# https://pypi.org/manage/account/publishing/ 에서 이 저장소, 워크플로 파일명
+# (release.yml), 환경명(pypi)을 등록해야 한다.
+#   · 프로젝트 설정 화면(pypi.org/manage/project/<패키지>/settings/publishing/)은
+#     **이미 발행된 프로젝트에만** 존재한다. 첫 공개 전에는 그 화면 자체가 없다.
+#   · pending publisher 는 **이름을 예약하지 않는다.** 등록해 두어도 다른 사람이
+#     먼저 같은 이름을 올리면 그 이름은 그쪽 것이 된다.
+#   · 첫 업로드가 성공하는 순간 pending publisher 는 그 프로젝트의 일반 trusted
+#     publisher 로 자동 전환된다. 그 뒤로는 프로젝트 설정 화면에서 관리한다.
+#
+# 태그는 red 커밋에도 밀 수 있고 브랜치 보호로 막히지 않으므로,
+# 검사를 여기서 다시 돌린다 — ci.yml 이 통과했다고 가정하지 않는다.
+#
+# 액션 핀은 ci.yml 머리말의 규칙을 따른다(setup-uv 만 전체 버전 — 메이저 태그 없음).
+
+on:
+  push:
+    tags: ["core-v*", "gui-v*"]
+  workflow_dispatch:
+    inputs:
+      package:
+        description: "대상 패키지"
+        type: choice
+        options: [core, gui]
+        default: core
+      dry_run:
+        description: "업로드 없이 빌드·검사까지만"
+        type: boolean
+        default: true
+
+permissions: {}
+
+jobs:
+  target:
+    name: 대상 판별
+    runs-on: ubuntu-latest
+    outputs:
+      slug: ${{ steps.pick.outputs.slug }}
+      dist: ${{ steps.pick.outputs.dist }}
+      dir: ${{ steps.pick.outputs.dir }}
+    steps:
+      - id: pick
+        env:
+          REF: ${{ github.ref_name }}
+          CHOICE: ${{ inputs.package }}
+        run: |
+          set -euo pipefail
+          # 태그면 접두사에서, 수동 실행이면 입력에서 대상을 얻는다.
+          slug="${CHOICE:-}"
+          [ -n "$slug" ] || slug="${REF%%-v*}"
+          case "$slug" in
+            core) dist=analysis-video;     dir=packages/core ;;
+            gui)  dist=analysis-video-gui; dir=packages/gui  ;;
+            *)
+              echo "::error::대상을 판별할 수 없습니다 (ref=$REF, 입력=${CHOICE:-없음})"
+              exit 1 ;;
+          esac
+          { echo "slug=$slug"; echo "dist=$dist"; echo "dir=$dir"; } >> "$GITHUB_OUTPUT"
+          echo "대상: $dist ($dir)"
+
+  verify:
+    name: 검사 · ${{ needs.target.outputs.dist }}
+    needs: target
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read         # 워크플로 기본값이 {} 라 체크아웃용으로 여기서만 연다
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.0.0
+        with:
+          # 릴리스 빌드만 캐시를 쓰지 않는다. 이 잡의 산출물은 **되돌릴 수 없는**
+          # PyPI 업로드로 나가므로, PR 이 채워 둘 수 있는 캐시를 재료로 삼지 않는다
+          # (setup-uv 의 기본값 auto 도 태그 push 에서는 같은 이유로 캐시를 끈다 —
+          # 여기서는 수동 실행 경로까지 포함해 명시적으로 끈다).
+          enable-cache: false
+
+      - name: 태그 · pyproject 버전 · CHANGELOG 절이 맞는가
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          TAG: ${{ github.ref_name }}
+          DIR: ${{ needs.target.outputs.dir }}
+          DIST: ${{ needs.target.outputs.dist }}
+          SLUG: ${{ needs.target.outputs.slug }}
+        run: |
+          set -euo pipefail
+          declared=$(uv run --no-project --with tomli python -c \
+            "import os,tomli;print(tomli.load(open(os.environ['DIR']+'/pyproject.toml','rb'))['project']['version'])")
+          expected="${SLUG}-v${declared}"
+          if [ "$TAG" != "$expected" ]; then
+            echo "::error::태그($TAG)와 pyproject 버전($declared → $expected)이 다릅니다"
+            exit 1
+          fi
+          echo "ok: $TAG"
+          # 릴리스 노트의 재료를 **업로드 전에** 확인한다. 없는 것을 뒤에 가서
+          # 알면 이미 되돌릴 수 없는 업로드가 끝난 뒤다.
+          python3 .github/scripts/changelog_section.py "$DIST" "$declared" >/dev/null
+          echo "ok: CHANGELOG 에 $DIST $declared 절이 있습니다"
+
+      # GUI 테스트는 Qt 렌더와 오디오 런타임을 요구한다.
+      - name: (gui) Qt·오디오 런타임
+        if: needs.target.outputs.slug == 'gui'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libgl1 libxkbcommon-x11-0 \
+            libdbus-1-3 libportaudio2
+
+      # GUI 테스트의 'analyzed' 픽스처가 실제 transcribe 를 돌려 가중치를 받는다.
+      - name: (gui) 모델 가중치 캐시
+        if: needs.target.outputs.slug == 'gui'
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/huggingface
+          key: hf-tiny-${{ runner.os }}
+
+      - name: 테스트
+        env:
+          DIR: ${{ needs.target.outputs.dir }}
+        run: |
+          uv sync
+          uv run pytest "$DIR/tests" -q
+
+      # GUI는 코어를 PyPI에서 가져간다. 존재 확인(색인에 이름이 있는가)으로는
+      # 부족하다 — 필요한 것은 **GUI가 선언한 범위를 만족하는 버전이 색인에서
+      # 실제로 해석되는가**이고, 코어를 방금 올린 직후에는 그 전파에 시간이 걸린다.
+      # 그래서 같은 해석을 재시도한다. 실패하면 여기서 멈춰 순서(코어 먼저)를 지킨다.
+      - name: (gui) 코어가 색인에서 실제로 해석되는가
+        if: needs.target.outputs.slug == 'gui'
+        env:
+          GUI_PYPROJECT: ${{ github.workspace }}/packages/gui/pyproject.toml
+          TRIES: "10"
+          DELAY: "30"
+        run: |
+          set -euo pipefail
+          # 요구 범위를 이 파일에 적지 않는다 — packages/gui/pyproject.toml 이 정본이고
+          # 선언이 바뀌면 게이트도 함께 바뀌어야 한다.
+          req=$(uv run --no-project --with packaging python - "$GUI_PYPROJECT" <<'PY'
+          import sys, tomllib
+          from packaging.requirements import Requirement
+          from packaging.utils import canonicalize_name
+          with open(sys.argv[1], "rb") as fh:
+              deps = tomllib.load(fh)["project"]["dependencies"]
+          for raw in deps:
+              if canonicalize_name(Requirement(raw).name) == "analysis-video":
+                  print(raw)
+                  break
+          else:
+              sys.exit("packages/gui/pyproject.toml 의 dependencies 에 analysis-video 가 없습니다")
+          PY
+          )
+          echo "GUI가 요구하는 코어: $req"
+          # 워크스페이스 밖에서 본다 — 루트의 [tool.uv.sources] 가 닿으면
+          # 색인이 아니라 옆 폴더를 보고 통과할 수 있다.
+          cd "$RUNNER_TEMP"
+          for i in $(seq 1 "$TRIES"); do
+            # --refresh: 색인 응답 캐시를 무시하고 다시 받는다. 방금 올린 버전은
+            # 전파에 시간이 걸리는데, 한 번 받아 둔 낡은 목록이 캐시에 남으면
+            # 뒤의 설치 스모크까지 같은 낡은 목록으로 틀린 결론을 낸다.
+            # --no-deps: 여기서 묻는 것은 "코어가 그 범위로 잡히는가" 하나다.
+            # --no-build: 설치본(휠)이 실제로 있어야 한다 — sdist 뿐이면 통과시키지 않는다.
+            if out=$(uv pip install --dry-run --refresh --no-deps --no-build \
+                       --python 3.12 --target "$RUNNER_TEMP/coregate" "$req" 2>&1); then
+              printf '%s\n' "$out" | grep -E '^ *\+ analysis-video' || true
+              echo "ok: 색인에서 해석됩니다"
+              exit 0
+            fi
+            echo "아직 해석되지 않습니다 ($i/$TRIES)"
+            if [ "$i" -lt "$TRIES" ]; then sleep "$DELAY"; fi
+          done
+          echo "마지막 시도의 uv 출력:"
+          printf '%s\n' "${out:-(없음)}"
+          echo "::error::$req 를 만족하는 코어가 $(( TRIES * DELAY / 60 ))분 안에 PyPI 색인에서 해석되지 않았습니다. ①코어를 먼저 릴리스했는지 ②그 버전이 이 범위 안인지(범위를 넓혀야 하면 packages/gui/pyproject.toml 을 고치고 GUI 태그를 다시 만드세요) 확인하세요. 전파가 이보다 오래 걸리는 일은 드뭅니다."
+          exit 1
+
+      - name: 설치 스모크 (저장소 밖 · 설치본만)
+        env:
+          SLUG: ${{ needs.target.outputs.slug }}
+          DIR: ${{ needs.target.outputs.dir }}
+        run: |
+          set -uo pipefail
+          mkdir -p "$RUNNER_TEMP/smoke"
+          cp -R "$DIR" "$RUNNER_TEMP/smoke/pkg"
+          # 워크스페이스 루트를 딸려 보내지 않는다 — 루트의 override·sources 선언은
+          # 최종 사용자에게 적용되지 않으므로 여기서도 적용되면 안 된다.
+          # set -e 를 켜지 않은 스텝이라 가드는 명시적으로 exit 한다.
+          if [ -e "$RUNNER_TEMP/smoke/pyproject.toml" ]; then
+            echo "::error::워크스페이스 루트가 딸려 왔습니다 — 스모크가 무의미해집니다"
+            exit 1
+          fi
+          if grep -qE '^\[tool\.uv\.sources\]' "$RUNNER_TEMP/smoke/pkg/pyproject.toml"; then
+            echo "::error::$DIR/pyproject.toml 에 [tool.uv.sources] 가 있습니다 — 루트로 옮기세요"
+            exit 1
+          fi
+          cd "$RUNNER_TEMP/smoke"
+          if [ "$SLUG" = core ]; then
+            plats="aarch64-apple-darwin x86_64-apple-darwin
+                   x86_64-manylinux_2_28 aarch64-manylinux_2_28
+                   x86_64-pc-windows-msvc"
+            # 코어는 축이 둘이다 — 기본 설치와 [stt]. 여기서 보는 것은 "설치본만으로
+            # 해석되는가" 하나이고, 백엔드가 실제로 붙는지·기본 설치에 딸려 오지는
+            # 않는지는 install-smoke.yml 이 본다(규칙은 그 한 곳에만 둔다).
+            # 배열로 두는 이유: 변수를 단어 분리로 풀면 ./pkg[stt] 가 경로 확장의
+            # 대상이 된다.
+            specs=(./pkg './pkg[stt]')
+          else
+            # GUI는 Qt 때문에 리눅스 하한이 코어보다 높다. aarch64는 glibc 2.31 미만에
+            # 설치본이 없다(packages/gui/README.md 지원 범위 참조).
+            plats="aarch64-apple-darwin x86_64-apple-darwin
+                   x86_64-manylinux_2_28 aarch64-manylinux_2_31
+                   x86_64-pc-windows-msvc"
+            specs=(./pkg)
+          fi
+          fail=0
+          for spec in "${specs[@]}"; do
+            for plat in $plats; do
+              for py in 3.11 3.12 3.13 3.14; do
+                uv pip install --dry-run --python "$py" --python-platform "$plat" \
+                  --target "$RUNNER_TEMP/t" --no-build "$spec" >/dev/null 2>&1 \
+                  || { echo "FAIL $spec $plat py$py"; fail=1; }
+              done
+            done
+          done
+          exit $fail
+
+      - name: 빌드
+        env:
+          DIST: ${{ needs.target.outputs.dist }}
+        run: |
+          rm -rf dist-release
+          uv build --package "$DIST" --out-dir dist-release
+
+      - name: 메타데이터 게이트
+        run: |
+          set -euo pipefail
+          uvx twine check --strict dist-release/*
+          meta=$(unzip -p dist-release/*.whl '*/METADATA')
+          for line in "License-Expression: MIT" "License-File: LICENSE" \
+                      "Description-Content-Type: text/markdown"; do
+            printf '%s\n' "$meta" | grep -qF "$line" \
+              || { echo "::error::METADATA에 '$line' 이 없습니다"; exit 1; }
+          done
+          unzip -l dist-release/*.whl | grep -q 'licenses/LICENSE' \
+            || { echo "::error::라이선스 본문이 동봉되지 않았습니다"; exit 1; }
+
+      # 90일 뒤 만료되고 로그인해야 받을 수 있다 — 배포물의 영구 사본은
+      # 아래 github-release 잡이 만드는 GitHub 릴리스 쪽이다. 여기 올리는 것은
+      # publish 잡에 넘기기 위한 잡 사이 전달용이다.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist-release
+          path: dist-release/
+
+  publish:
+    name: PyPI 업로드 · ${{ needs.target.outputs.dist }}
+    needs: [target, verify]
+    if: startsWith(github.ref, 'refs/tags/') && inputs.dry_run != true
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write        # Trusted Publishing(OIDC)에 필요한 유일한 권한
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist-release
+          path: dist-release/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # 이 액션의 기본 업로드 경로는 dist/ 다. 우리는 dist-release/ 에 받으므로
+          # 명시하지 않으면 없는 폴더를 보고 "MISSING DISTS" 로 아무것도 올리지 않는다.
+          packages-dir: dist-release/
+
+  github-release:
+    # 배포물이 사는 두 번째 자리. upload-artifact 는 90일 뒤 만료되고 로그인해야
+    # 받을 수 있어 "이 버전의 파일을 다시 구한다"에 쓸 수 없다. 릴리스 페이지는
+    # 만료되지 않고 로그인 없이 받을 수 있으며, 이 도구를 찾아오는 경로이기도 하다
+    # (GitHub 저장소 첫 화면의 Releases 칸).
+    # publish 가 건너뛰어지면(dry_run·태그 아님) 이 잡도 함께 건너뛰어진다.
+    name: GitHub 릴리스 · ${{ needs.target.outputs.dist }}
+    needs: [target, publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write        # 릴리스 생성 — 이 잡이 여는 유일한 권한
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist-release
+          path: dist-release/
+      - name: 릴리스 생성
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          DIST: ${{ needs.target.outputs.dist }}
+          SLUG: ${{ needs.target.outputs.slug }}
+        run: |
+          set -euo pipefail
+          # 태그와 pyproject 버전이 같다는 것은 verify 잡이 이미 확인했다.
+          version="${TAG#*-v}"
+          notes="$RUNNER_TEMP/notes.md"
+          {
+            echo "PyPI: https://pypi.org/project/$DIST/$version/"
+            echo
+            # 절이 없어도 여기서 멈추지 않는다 — PyPI 업로드는 이미 끝났고,
+            # 되돌릴 수 없는 일 뒤에 문서 형식으로 잡을 빨갛게 만들 이유가 없다.
+            # 같은 검사를 verify 잡이 업로드 **전에** 이미 했다.
+            python3 .github/scripts/changelog_section.py "$DIST" "$version" \
+              || echo "변경 이력은 저장소의 CHANGELOG.md 를 참조하세요."
+          } > "$notes"
+          # 태그 계열이 둘이라 제목에 대상을 적는다 — 목록에서 core-v0.1.0 만
+          # 보면 어느 패키지인지 읽히지 않는다.
+          # 'Latest' 배지는 코어에만 붙인다. 두 계열이 한 저장소에 있어 GitHub의
+          # 자동 판정에 맡기면 GUI 릴리스가 대표 자리를 가져갈 수 있는데,
+          # 이 저장소의 대표는 코어 CLI 다.
+          if [ "$SLUG" = core ]; then latest=true; else latest=false; fi
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$DIST $version" \
+            --notes-file "$notes" \
+            --latest="$latest" \
+            --verify-tag \
+            dist-release/*

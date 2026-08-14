@@ -5,26 +5,28 @@ F키(또는 버튼)로 "여기서 추출됐어야 한다"를 기입하면, 허�
 탐지기 튜닝의 정량 근거로 쓴다 — 초기 기획의 비교 메타데이터 출력 요건.
 """
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QDoubleSpinBox, QHBoxLayout, QLabel, QPushButton,
-                               QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QDoubleSpinBox, QHBoxLayout, QHeaderView, QLabel,
+                               QPushButton, QTableWidget, QTableWidgetItem,
+                               QVBoxLayout, QWidget)
 
 from analysis_video.manifest import write_json_atomic
 
 from ..flags import compare_metrics
+from ..i18n import tr
 from ..session import Session
 from . import ChildWindow, fmt_time
 
 
 class CompareWindow(ChildWindow):
     def __init__(self, session: Session):
-        super().__init__()
-        self.session = session
+        super().__init__(session)
         self.resize(560, 560)
 
         layout = QVBoxLayout(self)
 
         top = QHBoxLayout()
-        top.addWidget(QLabel("허용오차(초):"))
+        self._tol_label = QLabel()
+        top.addWidget(self._tol_label)
         self._tol = QDoubleSpinBox()
         # 창을 여는 것만으로 포커스를 가져가지 않게 — 그러면 전역 단축키가 죽는다.
         # 클릭(또는 Tab)했을 때만 편집 포커스를 받고, Esc로 되돌린다.
@@ -32,17 +34,16 @@ class CompareWindow(ChildWindow):
         self._tol.setRange(0.5, 10.0)
         self._tol.setSingleStep(0.5)
         self._tol.setValue(2.0)
-        self._tol.setToolTip("GT 플래그와 검출 프레임을 같은 것으로 볼 시간 오차 (Esc: 편집 종료)")
         self._tol.valueChanged.connect(self._recompute)
         top.addWidget(self._tol)
         top.addStretch()
-        add_btn = QPushButton("현재 시각 플래그 추가/제거 (F)")
-        add_btn.clicked.connect(self._add_flag_here)
-        del_btn = QPushButton("선택 삭제")
-        del_btn.clicked.connect(self._delete_selected)
-        export_btn = QPushButton("compare.json 내보내기")
-        export_btn.clicked.connect(self._export)
-        for b in (add_btn, del_btn, export_btn):
+        self._add_btn = QPushButton()
+        self._add_btn.clicked.connect(self._add_flag_here)
+        self._del_btn = QPushButton()
+        self._del_btn.clicked.connect(self._delete_selected)
+        self._export_btn = QPushButton()
+        self._export_btn.clicked.connect(self._export)
+        for b in (self._add_btn, self._del_btn, self._export_btn):
             b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             top.addWidget(b)
         layout.addLayout(top)
@@ -52,7 +53,10 @@ class CompareWindow(ChildWindow):
         layout.addWidget(self._summary)
 
         self._table = QTableWidget(0, 4)
-        self._table.setHorizontalHeaderLabels(["GT 플래그", "매칭 검출", "Δ(초)", "판정"])
+        # 열 폭을 기본값에 두면 머리글이 언어에 따라 잘린다("Matched detection" 등).
+        # 네 열이 폭을 나눠 갖게 해 어느 언어에서도 머리글이 온전히 보이게 한다.
+        self._table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.Stretch)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.cellClicked.connect(self._on_cell_clicked)
@@ -64,7 +68,18 @@ class CompareWindow(ChildWindow):
 
         self.bind(session.flags.changed, self._recompute)
         self.bind(session.store.reloaded, self._recompute)
-        self._recompute()
+        self.retranslate()
+
+    def retranslate(self) -> None:
+        self._tol_label.setText(tr("compare.tolerance"))
+        self._tol.setToolTip(tr("compare.tolerance_tip"))
+        self._add_btn.setText(tr("compare.add_flag"))
+        self._del_btn.setText(tr("compare.delete_selected"))
+        self._export_btn.setText(tr("compare.export"))
+        self._table.setHorizontalHeaderLabels([
+            tr("compare.col_gt"), tr("compare.col_detected"),
+            tr("compare.col_gap"), tr("compare.col_verdict")])
+        self._recompute()   # 요약·표 본문·FP 목록도 전부 문장이라 다시 계산한다
 
     def _add_flag_here(self) -> None:
         self.session.flags.toggle(self.session.engine.position())
@@ -94,12 +109,11 @@ class CompareWindow(ChildWindow):
         rec = "—" if m["recall"] is None else f"{m['recall']:.1%}"
         st = self.session.store
         n_out = len(self.session.flags.flags) - m["n_flags"]
-        scope = f" · 구간 밖 GT {n_out}개는 제외" if n_out else ""
-        self._summary.setText(
-            f"단위 {st.unit} ({st.window[0]:.0f}~{st.window[1]:.0f}초){scope}<br>"
-            f"GT {m['n_flags']}개 · 검출 {m['n_detected']}개 &nbsp;|&nbsp; "
-            f"<b>precision {prec}</b> (검출 중 GT 근방 비율) &nbsp; "
-            f"<b>recall {rec}</b> (GT 중 검출된 비율)")
+        scope = tr("compare.scope_excluded", count=n_out) if n_out else ""
+        self._summary.setText(tr(
+            "compare.summary", unit=st.unit, start=st.window[0], end=st.window[1],
+            scope=scope, n_flags=m["n_flags"], n_detected=m["n_detected"],
+            precision=prec, recall=rec))
 
         matched_by_flag = {x["flag"]: x for x in m["matched"]}
         flags = self._scoped_flags()
@@ -109,24 +123,21 @@ class CompareWindow(ChildWindow):
             cells = [fmt_time(fl["time"]),
                      fmt_time(hit["detected"]) if hit else "—",
                      f"{hit['gap']:+.2f}" if hit else "—",
-                     "TP ✓" if hit else "FN ✗ (로직이 놓침)"]
+                     tr("compare.tp") if hit else tr("compare.fn")]
             for col, text in enumerate(cells):
                 self._table.setItem(row, col, QTableWidgetItem(text))
 
         if not m["n_flags"]:
             # 정답지가 없으면 검출 전부가 형식상 FP로 잡힌다 — 그 목록을 늘어놓으면
             # 로직이 다 틀린 것처럼 읽힌다. 할 일을 알려주는 편이 정직하다.
-            self._fp_label.setText(
-                "<span style='color:gray'>이 구간에 GT 플래그가 없습니다 — "
-                "영상을 보며 <b>F</b>로 \"여기서 뽑혔어야 한다\"를 찍으면 그때부터 "
-                "precision·recall이 산출됩니다.</span>")
+            self._fp_label.setText(tr("compare.no_gt"))
             return
         fp = m["extra_detected"]
         shown = ", ".join(fmt_time(t) for t in fp[:10])
-        more = f" 외 {len(fp) - 10}건" if len(fp) > 10 else ""
+        more = tr("compare.fp_more", count=len(fp) - 10) if len(fp) > 10 else ""
         self._fp_label.setText(
-            f"<b>GT 없는 검출(FP 후보) {len(fp)}건:</b> {shown}{more}" if fp
-            else "GT 없는 검출: 없음")
+            tr("compare.fp_list", count=len(fp), shown=shown, more=more) if fp
+            else tr("compare.fp_none"))
 
     def _delete_selected(self) -> None:
         rows = sorted({i.row() for i in self._table.selectedIndexes()}, reverse=True)
@@ -136,5 +147,4 @@ class CompareWindow(ChildWindow):
     def _export(self) -> None:
         out = self.session.out_dir / "compare.json"
         write_json_atomic(out, {"flags": self.session.flags.flags, **self._metrics()})
-        self._summary.setText(self._summary.text() +
-                              f" &nbsp;<span style='color:#5a5'>→ {out.name} 저장됨</span>")
+        self._summary.setText(self._summary.text() + tr("compare.exported", name=out.name))

@@ -11,7 +11,7 @@
 그 전파가 일어나지 않는다.
 
     <video>.analysis/
-    ├── video.mkv  audio.wav  transcript.json   ← 원본 전체, 1회, 공유
+    ├── video.mkv  transcript.json              ← 원본 전체, 1회, 공유
     ├── detect_signals.npz  detect_adaptive.json ← 측정 캐시도 공유(영상 전체 1회)
     ├── context.md                              ← 인덱스: 어떤 분석들이 있는가
     └── runs/<이름>/  metadata.json  context.md  frames/  requested/
@@ -22,11 +22,15 @@
 공간을 공유하는 결합(커밋 291e64e 참조)도 건드리지 않는다.
 """
 import json
+import shutil
 from pathlib import Path
 
 from .errors import EXIT_INPUT, CliError
 
 FULL = "full"
+# 주문형 산출물(frame --at)이 사는 곳. 이름을 여기 한 번만 적는다 —
+# 재계산에서 살려내는 쪽과 장부를 읽고 쓰는 쪽이 같은 곳을 가리켜야 한다.
+REQUESTED = "requested"
 
 
 def parse_range(text: str) -> tuple[float, float]:
@@ -80,6 +84,31 @@ def unit_dir(out_dir: Path, rng: tuple[float, float] | None) -> Path:
     return out_dir / "runs" / name(rng)
 
 
+def reset_unit(unit: Path) -> Path:
+    """단위 디렉터리를 비우고 새로 만든다 — 단, 주문형 산출물은 살린다.
+
+    재계산이 결정적이려면 이전 판정이 섞이지 않게 통째로 지워야 한다. 그런데
+    requested/는 검출기의 판정이 아니라 호출자가 근거(--reason)를 적어 남긴
+    **주문**이다. 같이 지우면 임계를 한 번 조정할 때마다 주문과 그 근거가
+    사라져 "context.md를 읽고 필요한 프레임을 더 뽑는다"는 흐름이 성립하지
+    않는다. 살린 장부는 새 프레임 집합 기준으로 다시 계산된다(_recompute_request).
+
+    지우기 전에 옆으로 빼뒀다가 되돌린다. 도중에 죽어도 다음 실행이 남은
+    보관본을 그대로 복구한다 — 타임아웃 재실행이 이력을 삼키지 않게."""
+    stash = unit.parent / f".{unit.name}.{REQUESTED}"
+    live = unit / REQUESTED
+    if live.exists():
+        if stash.exists():
+            shutil.rmtree(stash)     # 현재 것이 진실 — 앞선 중단본은 버린다
+        live.rename(stash)
+    if unit.exists():
+        shutil.rmtree(unit)
+    unit.mkdir(parents=True, exist_ok=True)
+    if stash.exists():
+        stash.rename(unit / REQUESTED)
+    return unit
+
+
 def window(rng: tuple[float, float] | None, duration: float) -> tuple[float, float]:
     return (0.0, duration) if rng is None else rng
 
@@ -106,7 +135,7 @@ def merge_index(out_dir: Path, entries: list[dict]) -> list[dict]:
     """이번에 만든 단위를 기존 목록에 합친다 — 같은 이름은 새 것으로 대체.
 
     누적하는 이유: 나중에 구간을 하나 더 분석해도 앞서 만든 단위가 목록에서
-    사라지면 안 된다(디렉터리는 남아 있는데 인덱스에만 없는 상태 = 미배선)."""
+    사라지면 안 된다(디렉터리는 남아 있는데 인덱스에만 없는 상태 = 끊어진 참조)."""
     by_name = {e["name"]: e for e in load_index(out_dir)}
     for e in entries:
         by_name[e["name"]] = e
