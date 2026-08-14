@@ -451,15 +451,19 @@ Intel Mac · Linux · Windows | `faster-whisper` (CPU int8) | |
 
 Python 3.11–3.14. 아래 모든 조합에 대해 설치 해석을 검증했다.
 
-| | macOS (Apple Silicon / Intel) | Linux x86_64 / ARM64 | Windows x64 | Windows ARM64 |
-|---|---|---|---|---|
-Python 3.11–3.13 | ✅ | ✅ | ✅ | ❌ |
-Python 3.14 | ⚠️ `[stt]` 백엔드가 존재하지 않음 | ✅ | ✅ | ❌ |
+| | macOS Apple Silicon | macOS Intel | Linux x86_64 / ARM64 | Windows x64 | Windows ARM64 |
+|---|---|---|---|---|---|
+Python 3.11–3.13 | ✅ | ✅ | ✅ | ✅ | ❌ |
+Python 3.14 | ✅ macOS 14 이상 | ⚠️ `[stt]` 백엔드가 존재하지 않음 | ✅ | ✅ | ❌ |
 
 ⚠️ 는 **기본 설치는 정상**이고 자막이 딸린 영상은 그 환경에서도 끝까지 분석된다는 뜻이다
 (자막 파서는 순수 파이썬이다). `[stt]` 를 붙여도 그 조합에 설치 파일을 내는 상류 백엔드가
 없어 음성 인식만 빠진다. ❌ 는 **기본 설치 자체**가 안 되는 경우로, 음성 인식과 무관하게
 `opencv-python-headless` 의 Windows ARM64 설치 파일이 없기 때문이다.
+
+Apple Silicon + 3.14 도 ⚠️ 였다가 MLX 0.32 가 cp314 설치 파일을 내면서 열렸다. 그 파일의
+플랫폼 표기가 `macosx_14_0` 이상이라 **macOS 13 + 3.14** 만 여전히 ⚠️ 다 — 그 파이썬으로
+후퇴할 옛 MLX 가 없다.
 
 상류 설치 파일 부재로 인한 한계·설치 용량·미검증 항목은
 [`packages/core/README.md`](packages/core/README.md) (영문) 에 정직하게 적어 두었다.

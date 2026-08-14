@@ -34,15 +34,15 @@ dependencies = [
 [package.optional-dependencies]
 cuda = [
     { name = "faster-whisper", marker = "(python_full_version < '3.14' and platform_machine != 'arm64' and sys_platform == 'darwin') or (platform_machine != 'ARM64' and sys_platform == 'win32') or sys_platform == 'linux'" },
-    { name = "mlx-whisper", marker = "python_full_version < '3.14' and platform_machine == 'arm64' and sys_platform == 'darwin'" },
-    { name = "numba", marker = "python_full_version < '3.14' and platform_machine == 'arm64' and sys_platform == 'darwin'" },
+    { name = "mlx-whisper", marker = "(python_full_version < '3.14' and platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'arm64' and platform_release >= '23' and sys_platform == 'darwin')" },
+    { name = "numba", marker = "(python_full_version < '3.14' and platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'arm64' and platform_release >= '23' and sys_platform == 'darwin')" },
     { name = "nvidia-cublas-cu12", marker = "sys_platform != 'darwin'" },
     { name = "nvidia-cudnn-cu12", marker = "sys_platform != 'darwin'" },
 ]
 stt = [
     { name = "faster-whisper", marker = "(python_full_version < '3.14' and platform_machine != 'arm64' and sys_platform == 'darwin') or (platform_machine != 'ARM64' and sys_platform == 'win32') or sys_platform == 'linux'" },
-    { name = "mlx-whisper", marker = "python_full_version < '3.14' and platform_machine == 'arm64' and sys_platform == 'darwin'" },
-    { name = "numba", marker = "python_full_version < '3.14' and platform_machine == 'arm64' and sys_platform == 'darwin'" },
+    { name = "mlx-whisper", marker = "(python_full_version < '3.14' and platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'arm64' and platform_release >= '23' and sys_platform == 'darwin')" },
+    { name = "numba", marker = "(python_full_version < '3.14' and platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'arm64' and platform_release >= '23' and sys_platform == 'darwin')" },
 ]
 stt-fwhisper = [
     { name = "faster-whisper" },
@@ -63,8 +63,8 @@ requires-dist = [
     { name = "faster-whisper", marker = "(python_full_version < '3.14' and platform_machine != 'arm64' and sys_platform == 'darwin' and extra == 'stt') or (platform_machine != 'ARM64' and sys_platform == 'win32' and extra == 'stt') or (sys_platform == 'linux' and extra == 'stt')", specifier = ">=1.0" },
     { name = "faster-whisper", marker = "extra == 'stt-fwhisper'", specifier = ">=1.0" },
     { name = "matplotlib", marker = "extra == 'viz'", specifier = ">=3.9" },
-    { name = "mlx-whisper", marker = "python_full_version < '3.14' and platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'stt'", specifier = ">=0.4" },
-    { name = "numba", marker = "python_full_version < '3.14' and platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'stt'", specifier = ">=0.63" },
+    { name = "mlx-whisper", marker = "(python_full_version < '3.14' and platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'stt') or (platform_machine == 'arm64' and platform_release >= '23' and sys_platform == 'darwin' and extra == 'stt')", specifier = ">=0.4" },
+    { name = "numba", marker = "(python_full_version < '3.14' and platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'stt') or (platform_machine == 'arm64' and platform_release >= '23' and sys_platform == 'darwin' and extra == 'stt')", specifier = ">=0.63" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "nvidia-cublas-cu12", marker = "sys_platform != 'darwin' and extra == 'cuda'" },
     { name = "nvidia-cudnn-cu12", marker = "sys_platform != 'darwin' and extra == 'cuda'", specifier = ">=9" },

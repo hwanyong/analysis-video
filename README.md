@@ -459,14 +459,18 @@ Full contract: [`packages/core/README.md`](packages/core/README.md).
 
 Python 3.11–3.14. Install resolution is verified on every combination below.
 
-| | macOS (Apple Silicon / Intel) | Linux x86_64 / ARM64 | Windows x64 | Windows ARM64 |
-|---|---|---|---|---|
-Python 3.11–3.13 | ✅ | ✅ | ✅ | ❌ |
-Python 3.14 | ⚠️ no `[stt]` backend exists | ✅ | ✅ | ❌ |
+| | macOS Apple Silicon | macOS Intel | Linux x86_64 / ARM64 | Windows x64 | Windows ARM64 |
+|---|---|---|---|---|---|
+Python 3.11–3.13 | ✅ | ✅ | ✅ | ✅ | ❌ |
+Python 3.14 | ✅ on macOS 14+ | ⚠️ no `[stt]` backend exists | ✅ | ✅ | ❌ |
 
 ⚠️ means the tool installs and analyses subtitled video end to end; the `[stt]` extra
 resolves there but no upstream backend publishes a wheel for that combination. ❌ is the
 base install itself: `opencv-python-headless` has no Windows ARM64 wheel.
+
+Apple Silicon on 3.14 was ⚠️ until MLX started publishing cp314 wheels in 0.32; those are
+tagged `macosx_14_0` and newer, so macOS 13 with 3.14 is still ⚠️ — there is no older MLX
+to fall back to for that Python.
 
 Known limits (upstream wheel availability, install size, transcription verification
 status) are listed honestly in [`packages/core/README.md`](packages/core/README.md).

@@ -42,6 +42,18 @@ whisper 두 언어). 산출물 스키마는 그대로라 0.1.0으로 만든 분�
   디렉터리는 `source-missing`, 디렉터리와 `--out`을 함께 준 것은 `target-conflict`
   (모두 종료코드 2).
 
+- **`[stt]`가 Apple Silicon + Python 3.14에서 MLX를 준다.** 0.1.0에서 그 조합을 뺀 것은
+  "mlx가 cp313까지만 휠을 낸다"였는데, **mlx 0.32가 cp314 휠을 내면서 사실이 아니게 됐다.**
+  실측으로 확인하고 마커를 열었다 — macOS 26 · Python 3.14.5 · arm64에서 `mlx 0.32.0` +
+  `numba 0.67.0`으로 해석되고, `whisper-small`로 505초 한국어 강의를 37초에 전사했으며
+  (Metal), 같은 영상의 전체 파이프라인 결과가 3.12에서와 같았다(화면 81 · 이미지 82 ·
+  탈락 1). 조건이 하나 붙는다: 그 휠의 플랫폼 표기가 `macosx_14_0` 이상이라 **macOS 14
+  이상**에서만 켠다(마커의 `platform_release >= '23'` — Darwin 23 = macOS 14). macOS 13은
+  3.14용으로 후퇴할 옛 mlx가 없어, 조건 없이 켜면 그 조합에서 설치가 통째로 실패한다 —
+  "설치는 되고 백엔드만 없음"을 유지하는 것이 이 extra의 규칙이다.
+  **macOS Intel + 3.14는 그대로 백엔드 없음이다** — faster-whisper가 필요로 하는
+  onnxruntime의 cp314 macOS 휠이 arm64 하나뿐이다(실측 확인).
+
 ### 수정
 
 - **macOS에서 매 실행 stderr에 찍히던 ObjC 중복 클래스 경고 두 줄을 걷어냈다.**

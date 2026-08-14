@@ -446,7 +446,7 @@ Every cell below is the **base install**; the backend column is what `[stt]` yie
 
 | | 3.11 | 3.12 | 3.13 | 3.14 |
 |---|---|---|---|---|
-macOS Apple Silicon | ✅ MLX | ✅ MLX | ✅ MLX | ⚠️ no backend |
+macOS Apple Silicon | ✅ MLX | ✅ MLX | ✅ MLX | ✅ MLX (macOS 14+) |
 macOS Intel | ✅ CPU | ✅ CPU | ✅ CPU | ⚠️ no backend |
 Linux x86_64 / ARM64 | ✅ CPU | ✅ CPU | ✅ CPU | ✅ CPU |
 Windows x64 | ✅ CPU | ✅ CPU | ✅ CPU | ✅ CPU |
@@ -454,7 +454,9 @@ Windows ARM64 | ❌ cannot install | ❌ | ❌ | ❌ |
 
 ⚠️ = the base install works and analyses subtitled video end to end; `[stt]` resolves but
 brings no backend on that combination (see Known limits). ❌ = the base install itself
-cannot be resolved, which has nothing to do with speech recognition.
+cannot be resolved, which has nothing to do with speech recognition. Apple Silicon on 3.14
+needs **macOS 14 or newer** — that is where MLX publishes its cp314 wheels; on macOS 13 the
+cell reads ⚠️ instead.
 
 No external binary dependency (PyAV) — ffmpeg does not need to be installed separately.
 
@@ -477,11 +479,15 @@ Stated plainly rather than hidden — all of these are upstream wheel-availabili
   Linux is far cheaper because it has no torch and no MLX — measured for the same Python,
   the base install downloads 165MB of wheels and `[stt]` 235MB, so the extra costs about
   70MB there rather than 218MB. Model weights (above) are a further download on first use.
-- **Python 3.14 + macOS**: no backend exists. MLX publishes wheels only up to cp313 (as of
-  0.32), and faster-whisper needs onnxruntime, which has no macOS cp314 wheel — so `[stt]`
-  installs cleanly and gives you nothing. `doctor` reports the capability as absent and
-  still exits 0; a video with no usable subtitle is what fails, with exit code 4. Use 3.13
-  or lower if you need speech recognition on macOS.
+- **Python 3.14 + macOS Intel**: no backend exists. faster-whisper needs onnxruntime,
+  which publishes a cp314 wheel for macOS **arm64 only** — so `[stt]` installs cleanly and
+  gives you nothing. `doctor` reports the capability as absent and still exits 0; a video
+  with no usable subtitle is what fails, with exit code 4. Use 3.13 or lower if you need
+  speech recognition on an Intel Mac. Apple Silicon is no longer in this bucket: MLX ships
+  cp314 wheels from 0.32, verified end to end on macOS 26 + Python 3.14.5 (505s Korean
+  lecture, 37s with `small`, Metal). Its wheels are tagged `macosx_14_0` and newer, so
+  **macOS 13 with 3.14** is the one Apple Silicon combination still without a backend —
+  there is no older MLX to fall back to for cp314.
 - **Windows ARM64**: `opencv-python-headless` has no `win_arm64` wheel (only win32 and
   win_amd64), so installation itself fails — the **base** install, not the extra.
   `scenedetect` is genuinely used, so this cannot be worked around.
