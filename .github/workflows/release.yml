@@ -248,14 +248,32 @@ jobs:
         run: |
           set -euo pipefail
           uvx twine check --strict dist-release/*
-          meta=$(unzip -p dist-release/*.whl '*/METADATA')
+          # 검사 대상을 **파일로 떨궈 놓고** grep 한다. `... | grep -q` 로 쓰면 안 된다:
+          # grep -q 는 찾는 즉시 종료하는 것이 정상 동작이고, 그러면 아직 쓸 것이 남은
+          # 좌변이 EPIPE 로 죽어(bash 내장 printf 는 34KB METADATA 를 stdio 청크로
+          # 나눠 쓴다) 종료코드 141 을 내며, 위의 pipefail 이 그것을 파이프라인 밖으로
+          # 내보내 `||` 를 깨운다 — **검사가 성공할 때만 실패하고**, 어느 항목에서
+          # 터질지는 타이밍에 달린 경합이다. 실제로 core-v0.1.0 첫 시도가 여기서
+          # "License-File 이 없습니다"로 멈췄고, 그 필드는 멀쩡히 있었다.
+          unzip -p dist-release/*.whl '*/METADATA' > "$RUNNER_TEMP/METADATA"
+          unzip -l dist-release/*.whl        > "$RUNNER_TEMP/whl-listing.txt"
+          fail=0
           for line in "License-Expression: MIT" "License-File: LICENSE" \
                       "Description-Content-Type: text/markdown"; do
-            printf '%s\n' "$meta" | grep -qF "$line" \
-              || { echo "::error::METADATA에 '$line' 이 없습니다"; exit 1; }
+            grep -qF "$line" "$RUNNER_TEMP/METADATA" \
+              || { echo "::error::METADATA에 '$line' 이 없습니다"; fail=1; }
           done
-          unzip -l dist-release/*.whl | grep -q 'licenses/LICENSE' \
-            || { echo "::error::라이선스 본문이 동봉되지 않았습니다"; exit 1; }
+          grep -q 'licenses/LICENSE' "$RUNNER_TEMP/whl-listing.txt" \
+            || { echo "::error::라이선스 본문이 동봉되지 않았습니다"; fail=1; }
+          if [ "$fail" -ne 0 ]; then
+            # 무엇이 실제로 들어 있었는지 남긴다 — 다음 사람이 추측하지 않도록.
+            echo "실제 METADATA 머리(라이선스·설명 관련):"
+            grep -iE '^(Metadata-Version|License|Description-Content-Type)' \
+              "$RUNNER_TEMP/METADATA" || true
+            echo "휠 안의 라이선스 파일:"
+            grep -i 'licen' "$RUNNER_TEMP/whl-listing.txt" || echo "  (없음)"
+            exit 1
+          fi
 
       # 90일 뒤 만료되고 로그인해야 받을 수 있다 — 배포물의 영구 사본은
       # 아래 github-release 잡이 만드는 GitHub 릴리스 쪽이다. 여기 올리는 것은
