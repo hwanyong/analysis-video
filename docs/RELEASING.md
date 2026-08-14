@@ -240,14 +240,26 @@ GUI는 코어를 **PyPI 색인에서** 가져가는데, 방금 올린 버전이 
   `raw.githubusercontent.com/<소유자>/analysis-video/main/…` 절대 주소로 가리킨다.
   저장소가 비공개면 그 주소가 404 라, **PyPI 페이지에 깨진 이미지가 박힌 채로 굳는다**
   — 올린 버전의 메타데이터는 수정할 수 없다. 순서는 저장소 공개 → 태그다.
-- 두 프로젝트의 **pending publisher 등록** — 아래 "자동화 › 첫 공개 전에 한 번".
+- **코어의** pending publisher 등록 — 아래 "자동화 › 첫 공개 전에 한 번".
   등록 전에 태그를 밀면 `publish` 잡이 인증에서 거부된다.
+  **GUI 는 여기서 등록할 수 없다** — 네 칸(소유자·저장소·워크플로·환경)이 코어와
+  같아서 PyPI 가 중복으로 막는다. 코어를 발행한 뒤 아래 3.5 번에서 등록한다.
 - `CHANGELOG.md` 의 두 패키지 절에서 `## [0.1.0] — 미발행` 의 `미발행` 을 **발행일**로
   고친다. `changelog_section.py` 는 미발행 표기에 경고만 내고 통과시키므로(절이 없는
   것과 날짜가 안 박힌 것은 다른 사고다) 이건 사람이 봐야 한다.
 - 저장소 루트 `SKILL.md` 생성 (아래 "버전 올리기" 3번). `ci.yml` 의 `changelog` ·
   `skill-sync` 두 잡이 이 둘을 본다 — 태그를 밀기 전에 초록인지 확인한다.
 
+0. **태그 대신 `dry_run` 을 먼저 돌린다.** 같은 `verify` 잡을 그대로 돌리되 업로드만
+   건너뛴다(`publish` 는 태그 push 에서만 돈다).
+   ```bash
+   gh workflow run release.yml -f package=core -f dry_run=true    # gui 도 각각
+   ```
+   **지역에서 초록인 것이 러너에서 초록이라는 보장은 없다.** 0.1.0 에서 두 번 겪었다 —
+   러너는 `run:` 을 `bash -e`(bash 5)로 돌리는데 macOS 의 bash 3.2 는 같은 코드에서
+   다르게 움직여, 검사가 **통과해야 할 조합에서** 실패했다. 태그를 밀고 나서 알면
+   태그를 지웠다 다시 다는 일이 되고, 그 사이 `publish` 가 이미 돌았다면 되돌릴 수
+   없다. `dry_run` 은 몇 분이면 끝난다.
 1. **코어 태그를 민다.** 두 태그는 **같은 커밋**에 단다 — 사이에 `pyproject.toml` 을
    고치면 `release.yml` 의 "태그 · pyproject 버전 · CHANGELOG 절" 검사가 어긋난다.
    ```bash
@@ -265,6 +277,11 @@ GUI는 코어를 **PyPI 색인에서** 가져가는데, 방금 올린 버전이 
    ```
    따옴표 안의 범위는 `packages/gui/pyproject.toml` 의 선언과 **같아야 한다** —
    그것이 GUI가 실제로 요구하는 것이다. 보통 1분 안에 잡힌다.
+   - **3.5 (첫 공개에서만) GUI 의 pending publisher 를 지금 등록한다.**
+     https://pypi.org/manage/account/publishing/ 에서 `analysis-video-gui` 로,
+     나머지 네 칸은 코어와 같은 값. 2번이 끝나야 코어가 pending 목록에서 빠져
+     이 자리가 열린다(위 "첫 공개 전에 한 번" 의 세 번째 항목). 이미 발행된
+     뒤의 GUI 릴리스에서는 건너뛴다 — 그때는 프로젝트 설정 화면에 이미 있다.
 4. **GUI 태그를 민다.**
    ```bash
    git tag gui-v0.1.0 && git push origin gui-v0.1.0
@@ -319,7 +336,8 @@ GUI는 코어를 **PyPI 색인에서** 가져가는데, 방금 올린 버전이 
 
 PyPI Trusted Publishing(OIDC 기반, 토큰 없는 게시)이라 비밀값이 필요 없다. 다만
 **두 프로젝트 각각**에 대해 등록이 필요하고, **아직 발행되지 않은 이름은 등록하는
-자리가 다르다.**
+자리가 다르다.** 그리고 이 저장소에서는 **둘을 한꺼번에 등록할 수 없다**(아래 세
+번째 항목) — 미리 다 해 두고 시작하는 그림이 아니다.
 
 - 미발행 프로젝트 → 계정 사이드바의 **pending publisher(발행 대기 게시자)**:
   https://pypi.org/manage/account/publishing/
@@ -330,14 +348,39 @@ PyPI Trusted Publishing(OIDC 기반, 토큰 없는 게시)이라 비밀값이 �
 어느 쪽이든 넣는 값은 같다: 저장소 소유자·저장소 이름, 워크플로 파일명
 (`release.yml`), 환경명(`pypi`).
 
-두 가지를 알고 있어야 한다.
+세 가지를 알고 있어야 한다.
 
 - **pending publisher 는 이름을 예약하지 않는다.** 등록해 두어도 그 이름이 잠기지
   않고, 다른 사람이 먼저 같은 이름을 올리면 이름은 그쪽 것이 된다. 이름을 확보하는
   유일한 방법은 실제로 올리는 것뿐이다.
 - 첫 업로드가 성공하는 순간 pending publisher 는 그 프로젝트의 일반 trusted
   publisher 로 자동 전환된다. 그 뒤로는 프로젝트 설정 화면에서 관리한다.
+- **pending publisher 는 (소유자 · 저장소 · 워크플로 · 환경) 조합이 고유해야 한다 —
+  이 저장소는 그 넷이 두 패키지에서 완전히 같으므로 둘을 한꺼번에 등록할 수 없다.**
+  두 번째를 넣으면 빨간 배너로 거부된다: *"A pending trusted publisher matching this
+  configuration has already been registered for a different project name."*
+  0.1.0 첫 공개에서 실제로 막혔다.
 
-`release.yml` 의 `publish` 잡은 `pypi` 환경(environment)에서 돈다. 저장소 설정에
-같은 이름의 환경이 있어야 하며, 승인자를 걸어 두면 업로드 직전에 사람이 한 번 더
-막을 수 있다.
+  해결은 **순서**다. 위 두 번째 항목이 그대로 답이 된다 — 코어를 발행하면 그
+  pending 등록이 일반 publisher 로 전환되면서 pending 목록에서 빠지고, 그러면 같은
+  조합이 비어 GUI 를 등록할 수 있다. 즉 아래 "코어 → GUI 연속 릴리스" 사이에
+  **사람이 한 번 들어가는 지점이 하나 있다.**
+
+  ```
+  ① analysis-video 를 pending 으로 등록        ← 여기까지만 미리 된다
+  ② core-v* 태그 → 코어 발행
+     └ analysis-video 가 일반 publisher 로 전환, pending 목록이 빔
+  ③ analysis-video-gui 를 pending 으로 등록    ← 사람 손. ②보다 먼저는 불가능
+  ④ gui-v* 태그 → GUI 발행
+  ```
+
+  패키지가 셋 이상으로 늘면 같은 자리에서 또 막힌다. 그때도 이 순서로 하나씩
+  풀거나, `publish` 잡을 패키지별로 쪼개 환경명을 `pypi` · `pypi-gui` 처럼 나눠
+  조합을 다르게 만든다(그러면 미리 전부 등록할 수 있다. 대신 되돌릴 수 없는
+  업로드 경로의 YAML 을 손대는 일이라, 릴리스 당일이 아니라 미리 고칠 것).
+
+`release.yml` 의 `publish` 잡은 `pypi` 환경(environment)에서 돈다. 이 환경은 **손으로
+만들지 않아도 된다** — 워크플로가 처음 그 이름을 쓰는 순간 GitHub이 보호규칙 없이
+만든다(0.1.0 이 그렇게 만들어졌다). 다만 PyPI 등록의 환경명 칸과 **글자가 같아야**
+하고, 다르면 업로드가 인증에서 거부된다. 승인자를 걸어 두면 업로드 직전에 사람이
+한 번 더 막을 수 있다 — 저장소 Settings › Environments › `pypi` 에서 건다.
