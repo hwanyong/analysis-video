@@ -7,6 +7,7 @@
 [![Python 3.11–3.14](https://img.shields.io/badge/python-3.11%E2%80%933.14-blue)](#platform-support)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
+**[Website](https://hwanyong.github.io/analysis-video/?utm_source=github&utm_medium=readme)** ·
 [한국어 README](README.ko.md)
 
 ![One section of context.md beside the two frames it points to](docs/media/context-example.png)
@@ -85,6 +86,66 @@ The clip is already committed: [`docs/media/demo-pipeline.mp4`](docs/media/demo-
 clone. Nothing in it is anyone else's material — every pixel is drawn by
 `examples/make_demo_video.py`, which is also where the expected result is recorded:
 **5 screens, 6 images, 0 rejected**. Details in [`examples/README.md`](examples/README.md).
+
+## The loop your AI agent runs
+
+You never type these commands. You ask your agent a question about a video; it reaches for
+`analysis-video`, gets back something it can actually read, and answers from what was **on
+the screen** — not just what was said over it.
+
+![Three lanes — you, your AI agent, and analysis-video. You ask for a summary; the agent runs analyze; the tool splits, transcribes and detects screens, then returns context.md with a next object saying do=read, 6 images, 2,652 tokens. The agent reads, thinks and writes — the only step that needs a model — then stores the result with review, and next becomes done.](docs/media/loop-en.svg)
+
+Every explanation on a slide is full of *this*, *here*, *that term*. A transcript keeps the
+words and drops what they pointed at. That is the half this tool puts back:
+
+| | Subtitles alone | With `analysis-video` |
+|---|---|---|
+What the agent receives | "…and as you can see **here**, this gives us the normalised value…" | `## 63.13-87.73s` · `[blank board]` `[board, finished]` · **the very same sentence**
+What it can tell you | what was said. **Not what "here" was.** | the equation "here" pointed at, and the 24 seconds it took to write
+
+**The agent never has to work out what comes next.** Every command ends with the same `next`
+object, and `next` carries the price tag *before* the images arrive:
+
+```json
+{"do": "read",
+ "read": ["/abs/lecture.mp4.analysis/runs/full/context.md"],
+ "command": "analysis-video review /abs/lecture.mp4 --run full --write -",
+ "why": "no review for this analysis unit yet",
+ "remaining": ["full"],
+ "cost": {"images": 6, "image_tokens": 2652,
+          "rule": "if the long edge exceeds 1568px shrink it to 1568px, then (w*h)/750"}}
+```
+
+A model with a tight context window can therefore open the screens that were up longest and
+skip the rest — `context.md` prints how long each screen was held — instead of finding out
+it overspent after the images are already in.
+
+### What you might ask
+
+| You say | Your agent does | You get |
+|---|---|---|
+"Summarise `lecture.mp4` — include what was on the slides" | `analyze`, reads `context.md`, writes it up | a summary that quotes the board at 63s, not just the transcript
+"Pull every code snippet shown in `tutorial.mp4`" | opens only the screens that stayed up longest | the snippets, each with the timestamp it appeared
+"What was decided in `standup.mp4`?" | the same loop, one pass | the decisions, tied to whatever was on screen when each was made
+"Index this course folder so I can search it" | `analyze` per file | grep-able Markdown per video, image links intact
+"Just minutes 2–5 and 15–20" | `--range 120-300 --range 900-1200` | two independent units, never merged
+
+### An analysis is not finished when `context.md` exists
+
+Your agent's write-up is kept at `reviews/<run>.md`, stamped with the sha256 of the exact
+`context.md` it read. Ask again next week and the agent re-uses it instead of re-opening
+every image. Re-detect at a different threshold and it marks itself **stale** — the loop asks
+for a fresh reading rather than letting an old analysis quietly pass as current.
+
+| review state | meaning |
+|---|---|
+`missing` | never written
+`unreadable` | header gone or corrupt
+`stale` | the `context.md` it read has changed since
+`current` | still matches
+
+A video is done when **every unit is `current`** — that is the moment `next.do` becomes
+`"done"`. [Teach your agent this loop in one line](#use-it-from-an-ai-agent).
 
 ## Why frames *and* transcript
 
@@ -215,12 +276,7 @@ actual code constants — change a threshold and the documentation changes with 
 
 ## How it works
 
-```
-video ─► split ────────────► transcribe ─────────► frames ─────► context.md ─► review
-         video resource      subtitles first,      scene-change  screens +     what your
-         + subtitle tracks   Whisper as fallback   (image ops)   time +        agent read
-                                                                 dialogue      it and wrote
-```
+![Five stages in order: split writes a video resource and demuxes subtitle tracks; transcribe prefers subtitles and falls back to Whisper; frames detects scene change with image operations; context.md holds screens with time and dialogue; review holds what your agent read and wrote. The first four are image processing and file I/O with no model; only review involves your agent.](docs/media/pipeline-en.svg)
 
 - **split** — writes a video resource and demuxes any subtitle tracks the container
   carries (PyAV, no external ffmpeg). **No audio file is extracted**: Whisper decodes the
@@ -249,6 +305,56 @@ Stages run strictly in order and each one is resumable. If a run is cut off by a
 call the same command again and completed stages are skipped. Every `<video>` command
 answers with the same `next` object saying which link of that chain is due, so an agent
 never has to work it out.
+
+## How do you know it kept the right screens?
+
+Frame selection is pixel math, not a model — but that only moves the question. **A detector
+cannot judge its own output.** The optional GUI exists to let you judge it, and to turn that
+judgement into a number.
+
+![The analysis-video GUI with all seven windows open on the demo clip: Player, Gallery showing the six extracted frames with their timestamps and labels, Frame sync, Dialogue sync with the current line in bold, Compare report scoring detections against ground-truth flags, the hub listing source, subtitle, language and which windows are open, and the Timeline plotting the three detection signals against their baselines.](docs/media/gui-workbench.png)
+
+*Seven windows, each a separate OS window you can put on whatever monitor you like. The hub
+on the right owns no canvas of its own — it lists the source, the analysis unit, and which
+windows are open. Rebuild this image with
+`uv run python examples/make_gui_screenshot.py --window workbench`.*
+
+**Mark what *had* to be extracted, then score the detector against it.** Watch the video and
+press <kbd>F</kbd> at any moment that should have produced a frame; that writes a
+**ground-truth flag** to `user_flags.json`. The Compare report matches your flags against
+what the detector actually kept, within a tolerance you set:
+
+| | what it counts |
+|---|---|
+**recall** | the share of *your* flags the detector found — what it **missed**
+**precision** | the share of its detections that landed near one of your flags — what it **kept for no reason**
+
+Both stay blank until you have flagged something — a detector scored against no ground truth
+is a number with nothing behind it. The tolerance defaults to **2 seconds**, and clicking a
+row jumps playback to that row's ground-truth flag, so a number always leads back to the
+frame it is about. `Export compare.json` writes the comparison out, so a threshold change can
+be argued with a diff rather than an impression. That is what turns "raise
+`--cut-area-threshold`" from a guess into a measurement.
+
+**The windows follow the CLI.** They watch the analysis directory — `metadata.json`,
+`transcript.json`, and the output folder itself — and redraw when it changes. Re-run
+`analysis-video analyze` at a different threshold in your terminal and the timeline, the
+gallery and the report update on their own; there is nothing to reopen and no polling loop.
+Because `frames` empties and rebuilds the unit's folder, those windows go blank while the
+re-run is in flight and fill back in when it lands. One case still needs a restart: if you
+opened the GUI on a directory that had no analysis unit yet, the first `frames` run is not
+picked up.
+
+The outputs that carry the analysis — `state.json`, `transcript.json`, `metadata.json`,
+`frames.json` — are written to a temporary path and swapped in with a single rename, so a run
+killed by a timeout leaves the previous versions whole rather than truncated. **That is a
+property of the core, not a GUI feature**: it holds whether or not you ever open a window. It
+does not cover everything — the detector caches, the run index and the `context.md` an agent
+reads are still written in place, since a re-run rebuilds them. So the GUI does not lean on
+it: a read that lands mid-write leaves that panel empty and retries on the next watch event.
+
+You need none of this to use the tool. The GUI is a separate package with its own version, so
+CLI-only users never download Qt — see [Install](#install-from-the-repository).
 
 ## Keeping the analysis, and reclaiming the space
 
