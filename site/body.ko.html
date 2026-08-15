@@ -146,6 +146,17 @@ N1 없이 커지면 BN이라는 값도 당연히 1 없이 커지게 됩니다. .
   <p><strong>분석은 <code>context.md</code>가 생겼을 때 끝나는 게 아닙니다.</strong> 모든 단위에
   자기가 읽은 것과 여전히 일치하는 리뷰가 있을 때 끝납니다 — 그 순간
   <code>next.do</code>가 <code>"done"</code>이 됩니다.</p>
+
+  <h3>그래서 실제로 어떻게 생겼나</h3>
+  <p>실물이 저장소에 들어 있습니다:
+  <a href="https://github.com/hwanyong/analysis-video/blob/main/docs/media/demo-pipeline.mp4.full.review.md"
+     data-umami-event="github" data-umami-event-place="review-example"
+     target="_blank" rel="noopener">41초 데모 클립에 대해 에이전트가 쓴 분석문&nbsp;→</a>
+  머리말은 도구가 붙였고 본문은 에이전트가 썼습니다. 한 줄만 보려면 이것을 보세요 —
+  클립의 <strong>음성은 검출 신호를 둘</strong> 말하는데 <strong>화면의 슬라이드에는 셋</strong>이
+  적혀 있고, 리뷰가 "대사만 읽은 에이전트는 이 답을 틀렸을 것"을 짚어 냅니다. 프레임이 왜
+  필요한지를 주장이 아니라 도구 자신의 산출물로 보인 자리입니다.
+  <code>analysis-video analyze docs/media/demo-pipeline.mp4</code> 로 그대로 재현됩니다.</p>
 </section>
 
 <section id="install">

@@ -140,6 +140,14 @@ uv run python examples/make_gui_screenshot.py  # 바로 위 그림을 다시 만
 영상은 **모든 단위가 `current`일 때** 끝난다 — 그 순간 `next.do`가 `"done"`이 된다.
 [에이전트에게 이 루프를 한 줄로 가르치기](#ai-에이전트에-붙이기).
 
+**실물이 이 저장소에 있다.**
+[`docs/media/demo-pipeline.mp4.full.review.md`](docs/media/demo-pipeline.mp4.full.review.md)
+는 41초짜리 데모 클립에 실제로 루프를 돌려 에이전트가 쓴 글이다 — 머리말은 도구가 붙였고
+본문은 에이전트가 썼다. 한 줄만 보려면 이것을 보면 된다: 클립의 **음성은 검출 신호를 둘**
+말하는데 **화면의 슬라이드에는 셋**이 적혀 있고, 리뷰가 "대사만 읽은 에이전트는 이 답을
+틀렸을 것"을 짚어 낸다. 프레임이 왜 필요한지를 주장이 아니라 도구 자신의 산출물로 보인
+자리다. `analysis-video analyze docs/media/demo-pipeline.mp4` 로 그대로 재현된다.
+
 ## 왜 프레임과 대사를 함께 뽑나
 
 슬라이드 수업은 **주장을 화면에, 근거를 말에** 나눠 담는다. 자막은 그중 뒤쪽 절반을
