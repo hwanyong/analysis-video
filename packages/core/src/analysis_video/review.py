@@ -96,28 +96,40 @@ def normalize(text: str) -> str:
     return body.lstrip("\n").rstrip() + "\n"
 
 
-def render_header(*, run: str, unit_dir: Path, context_rel: str, context_sha: str,
-                  video: Path, version: str, at: str) -> str:
+def render_header(*, run: str, unit_rel: str, context_rel: str, context_sha: str,
+                  video_name: str, version: str, at: str) -> str:
     """코어가 소유하는 머리말. 기계용 한 줄은 HTML 주석 안의 JSON이다 —
     마크다운 표를 파싱할 필요가 없고, 렌더된 문서에서는 보이지 않으며,
     `schema` 칸을 스스로 들어 STATE/METADATA와 **독립적으로** 진화한다.
 
     임계·화면 수·이미지 수·전사 출처는 **적지 않는다.** 그것들은 metadata.json에서
     언제든 다시 읽히는 값이고, 파일에 굳히면 `frames`를 다른 임계로 다시 돌린
-    뒤에도 옛 값을 현재 사실처럼 계속 주장한다. 머리말은 참조 경로만 적는다."""
+    뒤에도 옛 값을 현재 사실처럼 계속 주장한다. 머리말은 참조 경로만 적는다.
+
+    **호스트 절대경로는 적지 않는다.** 전에는 단위 디렉터리와 원본을 절대경로로
+    적었는데, 이 파일은 `clean`이 어느 레벨에서도 지우지 않는 유일한 산출물이자
+    사람이 남에게 보내는 것이라(`--export-dir`이 그러라고 있다) 그 한 줄이
+    홈 디렉터리 이름을 그대로 싣고 나갔다. 게다가 셋 다 참이 아니게 되기 쉽다 —
+    분석 디렉터리를 옮기면 머리말이 거짓을 말하고, 같은 영상을 같은 방식으로
+    분석한 두 사람의 리뷰가 서로 다른 파일이 된다.
+
+    기준점은 out_dir 하나다. `context_rel`이 이미 그렇게 적히고 있었고, 나머지
+    두 줄만 다른 기준을 쓰고 있던 것이 어긋남이었다. 원본이 어디에 있었는지는
+    state.json이 지문과 함께 소유하며(`manifest.check_source`), 머리말이 그
+    두 번째 사본을 들 이유가 없다."""
     meta = json.dumps({"schema": SCHEMA, "run": run, "context": context_rel,
                        "context_sha256": context_sha, "at": at, "version": version},
                       ensure_ascii=False, sort_keys=True)
     return "\n".join([
         BEGIN,
         f"<!-- {meta} -->",
-        f"# {video.name} — {run}",
+        f"# {video_name} — {run}",
         "",
         "| 항목 | 값 |",
         "|---|---|",
-        f"| 분석 단위 | `{run}` — `{unit_dir}` |",
+        f"| 분석 단위 | `{run}` — `{unit_rel}` |",
         f"| 읽은 것 | `{context_rel}` · sha256 `{context_sha[:16]}…` |",
-        f"| 원본 | `{video}` |",
+        f"| 원본 | `{video_name}` |",
         f"| 작성 | {at} · analysis-video {version} |",
         END,
         "",

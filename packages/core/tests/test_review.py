@@ -13,11 +13,13 @@
 영영 풀리지 않는다. `next`는 계속 "다시 읽고 다시 넣으세요"를 안내하고, 재제출
 한 번마다 이미지 토큰 수만이 탄다.
 """
+import io
 import json
+import sys
 
 import pytest
 
-from analysis_video import manifest, review, runs
+from analysis_video import cli, manifest, review, runs
 
 
 def _unit(tmp_path, text="# 화면 1\n대사\n"):
@@ -39,8 +41,8 @@ def _write(tmp_path, body, *, force=False):
                            meta["context_sha256"] if meta else None, now, force)
     if action in ("create", "refresh", "update"):
         header = review.render_header(
-            run="full", unit_dir=unit, context_rel="runs/full/context.md",
-            context_sha=now, video=tmp_path / "v.mkv", version="9.9.9",
+            run="full", unit_rel="runs/full", context_rel="runs/full/context.md",
+            context_sha=now, video_name="v.mkv", version="9.9.9",
             at="2026-01-01T00:00:00+09:00")
         path.parent.mkdir(parents=True, exist_ok=True)
         manifest.write_text_atomic(path, review.compose(body, header))
@@ -178,3 +180,46 @@ def test_the_fingerprint_follows_context_not_the_transcript(tmp_path):
     (tmp_path / "transcript.json").write_text(
         json.dumps({"segments": [], "source": {"notes": ["새 note"]}}), encoding="utf-8")
     assert review.status(tmp_path, "full", unit / "context.md")["state"] == "current"
+
+
+# ---------- 머리말이 실어 나르는 것 ----------
+
+class _Stdin:
+    """`--write -`가 보는 표준입력. isatty()가 False여야 본문 읽기로 들어간다."""
+
+    def __init__(self, data: bytes):
+        self.buffer = io.BytesIO(data)
+
+    def isatty(self):
+        return False
+
+
+def test_the_written_header_carries_no_host_path(tmp_path, monkeypatch, capsys):
+    """머리말에 절대경로를 적으면 홈 디렉터리 이름이 남에게 그대로 간다.
+
+    이 파일은 `clean`이 어느 레벨에서도 지우지 않는 유일한 산출물이고
+    `--export-dir`은 그것을 남에게 보내라고 있는 옵션이다. 실제로 저장소의
+    예시 리뷰(docs/media/*.review.md)가 `/Users/<이름>/...` 두 줄을 싣고
+    나갈 뻔했다.
+
+    **cmd_review를 통째로 밟는다.** render_header만 보면 상대경로를 넣어
+    부르는 시험이 되어, 절대경로를 만들어 넘기던 **호출부**의 회귀를 못 잡는다."""
+    video = tmp_path / "home" / "이름" / "v.mkv"
+    video.parent.mkdir(parents=True)
+    video.write_bytes(b"\0")
+    out_dir = tmp_path / "home" / "이름" / "v.mkv.analysis"
+    unit = out_dir / "runs" / "full"
+    unit.mkdir(parents=True)
+    (unit / "context.md").write_text("# 화면 1\n대사\n", encoding="utf-8")
+    (out_dir / "runs" / "index.json").write_text(
+        json.dumps([{"name": "full", "range": None, "dir": str(unit)}]),
+        encoding="utf-8")
+
+    monkeypatch.setattr(sys, "stdin", _Stdin("## 요약\n본문\n".encode()))
+    assert cli.main(["review", str(video), "--run", "full", "--write", "-"]) == 0
+    capsys.readouterr()
+
+    text = review.review_path(out_dir, "full").read_text(encoding="utf-8")
+    assert str(tmp_path) not in text, "머리말이 호스트 절대경로를 실었다"
+    assert "runs/full" in text, "단위는 out_dir 기준 상대경로로 남아야 한다"
+    assert "v.mkv" in text, "어느 영상의 분석인지는 남아야 한다"

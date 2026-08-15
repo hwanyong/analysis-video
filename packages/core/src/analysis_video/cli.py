@@ -828,9 +828,9 @@ def cmd_review(args) -> int:
         result = {"action": "unchanged", "path": str(path)}
     else:
         header = review.render_header(
-            run=run_name, unit_dir=unit,
+            run=run_name, unit_rel=unit.relative_to(out_dir).as_posix(),
             context_rel=ctx.relative_to(out_dir).as_posix(), context_sha=now_sha,
-            video=video, version=__version__, at=review.now_iso())
+            video_name=video.name, version=__version__, at=review.now_iso())
         path.parent.mkdir(parents=True, exist_ok=True)
         manifest.write_text_atomic(path, review.compose(body, header))
         result = {"action": {"create": "created", "refresh": "refreshed",
