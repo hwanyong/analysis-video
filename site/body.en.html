@@ -1,0 +1,483 @@
+<section class="hero">
+  <h1>analysis-video</h1>
+  <p class="tagline">Turn video into AI-readable context.</p>
+
+  <p class="lede">Convert lecture, screencast, and slide-based video into a single Markdown
+  file an LLM can actually read: <strong>keyframes, timestamps, and transcript, aligned
+  screen by screen</strong>. A command-line tool that runs entirely on your machine.</p>
+
+  <div class="cmd">
+    <code>uvx analysis-video@latest analyze lecture.mp4</code>
+    <button class="copy" type="button" data-done="copied"
+            data-umami-event="copy-install" data-umami-event-place="hero">copy</button>
+  </div>
+
+  <div class="cta">
+    <a class="btn btn-primary" href="https://github.com/hwanyong/analysis-video"
+       data-umami-event="github" data-umami-event-place="hero"
+       target="_blank" rel="noopener">GitHub&nbsp;→</a>
+    <a class="btn" href="https://pypi.org/project/analysis-video/"
+       data-umami-event="pypi" data-umami-event-place="hero"
+       target="_blank" rel="noopener">PyPI&nbsp;→</a>
+  </div>
+
+  <ul class="facts">
+    <li>No API key</li>
+    <li>No cloud upload</li>
+    <li>No ffmpeg install</li>
+    <li>Python 3.11–3.14</li>
+    <li>MIT</li>
+  </ul>
+</section>
+
+<section id="why">
+  <p class="kicker">The problem</p>
+  <h2>Subtitles are half the video</h2>
+  <p class="sub">Ask an AI to analyze a lecture video and all it gets is the subtitles —
+  the speech, and nothing that was written, drawn, coded, or shown on screen.</p>
+
+  <p>Slide-based teaching puts the <strong>claim</strong> on screen and the
+  <strong>reasoning</strong> in speech. A subtitle track is an excellent record of that
+  second half — a person wrote it, so the proper nouns and the numbers are right — which
+  is exactly why this tool reads it when there is one. But nothing in it records
+  <em>which sentence belonged to which slide</em>. Frames alone lose the explanation.
+  You need both, aligned.</p>
+
+  <p><code>analysis-video</code> samples frames by <strong>how much the screen
+  changed</strong> rather than at a fixed interval, and writes an image of every distinct
+  screen, the time range it was on screen, and the speech that happened during it — as one
+  Markdown file you can grep, index, version, and hand to any model.</p>
+</section>
+
+<section id="output">
+  <p class="kicker">What you get</p>
+  <h2>One Markdown file, one screen per entry</h2>
+
+  <pre><code>## 63.13-87.73s
+![](read/scene_020_t0063.13.jpg)
+![](read/scene_021_t0087.70.jpg)
+N1 없이 커지면 BN이라는 값도 당연히 1 없이 커지게 됩니다. ...</code></pre>
+
+  <figure>
+    <img src="{{base}}/media/context-example.png" width="1440" height="1126" loading="lazy" decoding="async"
+         alt="A section of context.md beside the two extracted keyframes its image links point to — a blank whiteboard and the same board after it was written on.">
+    <figcaption>One screen of the demo clip. The Markdown on the left is verbatim output;
+    the two images are what its <code>![]()</code> lines point to. The board was written
+    line by line, so the tool keeps <strong>both the empty board and the finished
+    one</strong> — a cut detector alone would have kept only the empty one.</figcaption>
+  </figure>
+
+  <p>One entry = one screen, or the screens a single sentence spanned. When a screen has
+  two images they are its first and last appearance — for handwriting or progressive
+  slides, the second one is the completed state. <strong>The transcript is distributed
+  across screens exactly once, with nothing dropped.</strong></p>
+
+  <p>The linked images are downscaled <strong>reading copies</strong>; originals stay at
+  full resolution under <code>frames/</code>. That is a context-window decision, not a disk
+  one: measured, a reading copy costs <strong>4.17× fewer tokens</strong> than the
+  full-resolution frame — the difference between a one-hour lecture that fits in a
+  1M-token window and one that does not. The opening paragraph of <code>context.md</code>
+  states the image count and roughly what opening all of them costs, so a model can decide
+  how many to open <em>before</em> opening any.</p>
+</section>
+
+<section id="workflow">
+  <p class="kicker">In your AI workflow</p>
+  <h2>Your AI agent runs it — you just ask</h2>
+  <p class="sub">You never type these commands. You ask your agent a question about a video;
+  it reaches for <code>analysis-video</code>, gets back something it can actually read, and
+  answers from what was <strong>on the screen</strong> — not just what was said over it.</p>
+
+  <h3>What changes</h3>
+  <div class="scroll-x">
+  <table>
+    <thead><tr><th></th><th>Subtitles alone</th><th>With analysis-video</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>What the<br>agent receives</td>
+        <td>“…and as you can see <strong>here</strong>, this gives us the normalised value…”</td>
+        <td><code>## 63.13-87.73s</code><br>[ blank board ] [ board, finished ]<br>+ the very same sentence</td>
+      </tr>
+      <tr>
+        <td>What it can<br>tell you</td>
+        <td>what was said.<br><strong>Not what “here” was.</strong></td>
+        <td>the equation “here” pointed at,<br>and the 24 seconds it took to write</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p>Every explanation on a slide is full of <strong>this</strong>, <strong>here</strong>,
+  <strong>that term</strong>. A transcript keeps the words and drops what they pointed at.
+  That is the half this tool puts back.</p>
+
+  <h3>The loop, end to end</h3>
+  <figure>
+    <img src="{{base}}/media/loop-en.svg" width="900" height="638" loading="lazy" decoding="async"
+         alt="Three lanes — you, your AI agent, and analysis-video. You ask for a summary; the agent runs analyze; the tool splits, transcribes and detects screens, then returns context.md with a next object saying do=read, 6 images, 2,652 tokens. The agent reads, thinks and writes — the only step that needs a model — then stores the result with review, and next becomes done.">
+  </figure>
+
+  <p>The agent never has to work out what comes next: <strong>every command ends with the
+  same <code>next</code> object</strong> telling it whether to run something, read something,
+  or answer you. And <code>next</code> carries the price tag <em>before</em> the images —
+  <code>{"images": 6, "image_tokens": 2652}</code> — so a model with a full context window
+  can open the screens that were up longest and skip the rest, instead of finding out too
+  late.</p>
+
+  <h3>What you might ask</h3>
+  <div class="scroll-x">
+  <table>
+    <thead><tr><th>You say</th><th>Your agent does</th><th>You get</th></tr></thead>
+    <tbody>
+      <tr><td>“Summarise <code>lecture.mp4</code> — include what was on the slides”</td><td>runs <code>analyze</code>, reads <code>context.md</code>, writes it up</td><td>a summary that quotes the board at 63s, not just the transcript</td></tr>
+      <tr><td>“Pull every code snippet shown in <code>tutorial.mp4</code>”</td><td>opens only the screens that stayed up longest</td><td>the snippets, each with the timestamp it appeared</td></tr>
+      <tr><td>“What was decided in <code>standup.mp4</code>?”</td><td>same loop, one pass</td><td>the decisions, tied to whatever was on screen when each was made</td></tr>
+      <tr><td>“Index this course folder so I can search it”</td><td><code>analyze</code> per file</td><td>grep-able Markdown per video, image links intact</td></tr>
+      <tr><td>“Just minutes 2–5 and 15–20”</td><td><code>--range 120-300 --range 900-1200</code></td><td>two independent units, never merged</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>What you keep</h3>
+  <p>The answer is not the only thing left over. Your agent's write-up is stored beside the
+  video at <code>reviews/&lt;run&gt;.md</code>, stamped with the sha256 of the exact
+  <code>context.md</code> it read. Ask again next week and the agent re-uses it instead of
+  re-opening every image. Re-detect at a different threshold and it marks itself
+  <strong>stale</strong> — the loop asks for a fresh reading rather than letting an old
+  analysis quietly pass as current.</p>
+  <p><strong>An analysis is not finished when <code>context.md</code> exists.</strong> It is
+  finished when every unit has a review that still matches what it read — that is the moment
+  <code>next.do</code> becomes <code>"done"</code>.</p>
+</section>
+
+<section id="install">
+  <p class="kicker">Install</p>
+  <h2>Three ways, no ffmpeg</h2>
+  <p class="sub">Decoding uses PyAV, which ships its own binaries. There is nothing to
+  install at the system level.</p>
+
+  <div class="cmd">
+    <code>uvx analysis-video@latest analyze lecture.mp4</code>
+    <button class="copy" type="button" data-done="copied"
+            data-umami-event="copy-install" data-umami-event-place="install-uvx">copy</button>
+  </div>
+  <div class="cmd">
+    <code>uv tool install analysis-video</code>
+    <button class="copy" type="button" data-done="copied"
+            data-umami-event="copy-install" data-umami-event-place="install-tool">copy</button>
+  </div>
+  <div class="cmd">
+    <code>pip install analysis-video</code>
+    <button class="copy" type="button" data-done="copied"
+            data-umami-event="copy-install" data-umami-event-place="install-pip">copy</button>
+  </div>
+
+  <p><code>@latest</code> matters: <code>uvx</code> caches the version it resolved the
+  first time and keeps running that one until told otherwise.</p>
+
+  <h3>Do you need speech recognition?</h3>
+  <p>The base install has <strong>no whisper backend, and most videos never need one.</strong>
+  When the video has a subtitle beside it or a text track inside the container, that is
+  where the dialogue comes from — no model is loaded, no weights are downloaded, and
+  nothing touches the network.</p>
+
+  <div class="scroll-x">
+  <table>
+    <thead><tr><th>Your video</th><th>What to install</th></tr></thead>
+    <tbody>
+      <tr><td>has a subtitle beside it (<code>lecture.ko.srt</code>) or a text track inside the container</td><td><strong>base install</strong> — analysed end to end, offline</td></tr>
+      <tr><td>you name a subtitle yourself with <code>--transcript FILE</code></td><td><strong>base install</strong></td></tr>
+      <tr><td>has no usable subtitle anywhere</td><td><code>analysis-video[stt]</code></td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p>Guessing wrong is cheap. <code>analysis-video doctor</code> reports the missing
+  capability and still <strong>exits 0</strong>, and the only run that fails is a
+  transcription that actually reached whisper — exit <strong>4</strong>, with the install
+  command in <code>error.hint</code>.</p>
+</section>
+
+<section id="agent">
+  <p class="kicker">Setup, part two</p>
+  <h2>One line teaches your agent the loop</h2>
+  <p class="sub">Installing the package puts a command on your PATH. This puts the loop
+  above into your agent's head — once, for every project folder you will ever open.</p>
+
+  <div class="cmd">
+    <code>uvx analysis-video@latest install-skill</code>
+    <button class="copy" type="button" data-done="copied"
+            data-umami-event="copy-install" data-umami-event-place="skill">copy</button>
+  </div>
+
+  <p>That writes a short <strong>Claude Code skill</strong> to
+  <code>~/.claude/skills/analysis-video/</code>. It is not a description of the tool — it is
+  the instruction to run the loop: call <code>agent-guide</code> first, follow
+  <code>next</code> until it says <code>done</code>, and do not stop at
+  <code>context.md</code>. No plugin, no marketplace, <strong>no MCP server to keep
+  running</strong>. For harnesses without a skill mechanism — Codex, Cline, Cursor, anything
+  that reads <code>AGENTS.md</code>:</p>
+
+  <div class="cmd">
+    <code>analysis-video install-skill --agents-file AGENTS.md</code>
+    <button class="copy" type="button" data-done="copied"
+            data-umami-event="copy-install" data-umami-event-place="skill-agents">copy</button>
+  </div>
+
+  <p>That inserts the guide between markers and <strong>replaces</strong> that block on
+  re-run, so upgrading never leaves two conflicting copies in your rules file. The agent's
+  authoritative reference is <code>analysis-video agent-guide</code> — a document generated
+  from the actual code constants, so changing a threshold changes the documentation with it.
+  Your agent reads the real values, never a stale copy of them.</p>
+</section>
+
+<section id="usage">
+  <p class="kicker">Usage</p>
+  <h2>Analyze, read, keep</h2>
+
+  <pre><code># 1 — analyze (stages run in order, each one resumable)
+analysis-video analyze lecture.mp4
+# → lecture.mp4.analysis/runs/full/context.md
+
+# 2 — your agent reads context.md and writes its analysis back
+analysis-video review lecture.mp4 --write -
+
+# 3 — reclaim what can be rebuilt
+analysis-video clean lecture.mp4 --level images
+
+# only part of a video? each range is an independent unit, never merged
+analysis-video analyze lecture.mp4 --range 120-300 --range 900-1200
+
+# a frame the detector had no reason to pick
+analysis-video frame lecture.mp4 --at 421.8 --reason "why this moment matters"</code></pre>
+
+  <p><strong>Built for AI agents as the primary consumer</strong>, not humans: exactly one
+  JSON object on stdout per call, decisions expressible through exit codes alone
+  (<code>0</code> ok · <code>2</code> bad input · <code>3</code> stage order ·
+  <code>4</code> something missing), absolute paths everywhere, and resumable stages. Every
+  command ends with the same <code>next</code> object saying which step is due, so the
+  caller never has to work it out.</p>
+</section>
+
+<section id="how">
+  <p class="kicker">How it works</p>
+  <h2>Five stages, no model in the loop</h2>
+
+  <figure>
+    <img src="{{base}}/media/pipeline-en.svg" width="980" height="268" loading="lazy" decoding="async"
+         alt="Five stages in order: split writes a video resource and demuxes subtitle tracks; transcribe prefers subtitles and falls back to Whisper; frames detects scene change with image operations; context.md holds screens with time and dialogue; review holds what your agent read and wrote. The first four are image processing and file I/O with no model; only review involves your agent.">
+  </figure>
+
+  <p><strong>This tool does not interpret anything.</strong> There is no LLM call anywhere
+  in the pipeline — a subtitle file is read as written, Whisper is a speech-recognition
+  model, and frame detection is pixel math. What the tool produces is <em>readable
+  material</em>; deciding what it <em>means</em> is done by the AI agent that reads
+  <code>context.md</code>. That is why the chain ends at <code>review</code>: the
+  interpretation happens outside the tool, and <code>review</code> is where it is kept
+  instead of evaporating with the chat session.</p>
+
+  <figure>
+    <img src="{{base}}/media/gui-timeline.png" width="1400" height="760" loading="lazy" decoding="async"
+         alt="The optional GUI timeline window plotting three scene-detection signals against their baselines, with four spikes marking slide cuts and a slow climb marking a whiteboard filling in.">
+    <figcaption>The optional GUI (<code>analysis-video-gui</code>) plots the three detection
+    signals against their baselines. The four spikes are slide cuts; the slow climb from
+    10s to 29s is the board filling in — the drift a cut detector cannot see.</figcaption>
+  </figure>
+
+  <h3>Where the transcript comes from</h3>
+  <p>A subtitle written by a person beats any recognizer, so dialogue is taken from the
+  first source that works: <code>--transcript FILE</code> you name, then every sidecar
+  (<code>.srt</code> / <code>.vtt</code> / <code>.smi</code>) and container text track
+  ranked as one list <em>by language first</em>, then Whisper. Candidates that cover under
+  30% of the video, hold fewer than 5 cues, run past the end, or are more than 30% roll-up
+  (the signature of <strong>auto-generated captions</strong>) are rejected and the next one
+  is opened. <code>transcript.json</code> records why each source was passed over, so you
+  can always tell why Whisper ran. <strong>Nothing is translated</strong> — a language
+  mismatch is reported, not silently rewritten.</p>
+</section>
+
+<section id="verify">
+  <p class="kicker">Trusting the detector</p>
+  <h2>How do you know it kept the right screens?</h2>
+  <p class="sub">Frame selection is pixel math, not a model — but that only moves the
+  question. A detector cannot judge its own output. So the optional GUI exists to let
+  <strong>you</strong> judge it, and to turn that judgement into a number.</p>
+
+  <figure>
+    <img src="{{base}}/media/gui-workbench.png" width="1400" height="1284" loading="lazy" decoding="async"
+         alt="The analysis-video GUI with all seven windows open on the demo clip: Player, Gallery showing the six extracted frames with their timestamps and labels, Frame sync, Dialogue sync with the current line in bold, a Compare report whose precision and recall read as dashes because no ground-truth flags were placed, the hub listing source, subtitle, language and which windows are open, and the Timeline plotting lanes for frames, rejected, requested, screen starts, STT and flags above the three detection signals and their baselines.">
+    <figcaption><code>analysis-video-gui</code> on the demo clip in this repository —
+    seven windows, each one a separate OS window you can put on whatever monitor you like.
+    The hub at the right owns no canvas of its own: it lists the source, the analysis unit,
+    and which windows are open. <strong>The compare report shows dashes, not zeros</strong>:
+    no ground-truth flags have been placed in this run, and a detector scored against no
+    ground truth is a number with nothing behind it.</figcaption>
+  </figure>
+
+  <h3>Mark what <em>had</em> to be extracted, then score the detector against it</h3>
+  <p>Watch the video and press <strong>F</strong> at any moment that should have produced a
+  frame. That writes a <strong>ground-truth flag</strong> to <code>user_flags.json</code>.
+  The Compare report then matches your flags against what the detector actually kept, within
+  a tolerance you set, and reports two numbers:</p>
+
+  <div class="scroll-x">
+  <table>
+    <thead><tr><th></th><th>What it counts</th></tr></thead>
+    <tbody>
+      <tr><td><strong>recall</strong></td><td>the share of <em>your</em> flags that the detector found — what it <strong>missed</strong></td></tr>
+      <tr><td><strong>precision</strong></td><td>the share of its detections that landed near one of your flags — what it <strong>kept for no reason</strong></td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p>Both stay blank until you have flagged something — a detector scored against no ground
+  truth is a number with nothing behind it. The tolerance defaults to <strong>2 seconds</strong>,
+  and <strong>clicking a row jumps playback to that row's ground-truth flag</strong>, so a
+  number always leads back to the frame it is about. <code>Export compare.json</code> writes
+  the comparison out, so a threshold change can be argued with a diff rather than an
+  impression. <strong>That is what turns “raise the cut-area threshold” from a guess into a
+  measurement.</strong></p>
+
+  <h3>It follows the CLI</h3>
+  <p>The windows watch the analysis directory — <code>metadata.json</code>,
+  <code>transcript.json</code>, and the output folder itself — and redraw when they change.
+  Re-run <code>analysis-video analyze</code> with a different threshold in your terminal and
+  the timeline, the gallery and the report update on their own; there is nothing to reopen,
+  and there is no polling loop. Because <code>frames</code> empties and rebuilds the unit's
+  folder, those windows go blank while the re-run is in flight and fill back in when it
+  lands. One case still needs a restart: if you opened the GUI on a directory that had no
+  analysis unit yet, the first <code>frames</code> run is not picked up.</p>
+  <p>The outputs that carry the analysis — <code>state.json</code>,
+  <code>transcript.json</code>, <code>metadata.json</code>, <code>frames.json</code> — are
+  written to a temporary path and swapped in with a single rename, so a run killed by a
+  timeout leaves the previous versions whole rather than truncated. <strong>That is a
+  property of the core, not a GUI feature</strong>: it holds whether or not you ever open a
+  window. It does not cover everything — the detector caches, the run index and the
+  <code>context.md</code> an agent reads are still written in place, since a re-run rebuilds
+  them. So the GUI does not lean on it: a read that lands mid-write leaves that panel empty
+  and retries on the next watch event.</p>
+
+  <p class="sub"><strong>You do not need any of this to use the tool.</strong> The GUI ships
+  as a separate package with its own version (<code>analysis-video-gui</code>), so CLI-only
+  users never download Qt. It exists for the moments when the honest answer to “did it pick
+  the right screens?” has to be a number rather than a feeling.</p>
+</section>
+
+<section id="compare">
+  <p class="kicker">Compared to</p>
+  <h2>What each approach leaves you with</h2>
+
+  <div class="scroll-x">
+  <table>
+    <thead><tr><th>Approach</th><th>What you get</th></tr></thead>
+    <tbody>
+      <tr><td>Subtitles alone — the usual agent fallback for YouTube</td><td>speech only; slides, code, diagrams, handwriting all gone</td></tr>
+      <tr><td>Claude Messages API</td><td>images, not video — animated formats are read as their <strong>first frame only</strong></td></tr>
+      <tr><td>Claude Cowork “Record a skill”</td><td>screenshots + input events + narration; the recording is converted first and <strong>not retained</strong></td></tr>
+      <tr><td>Gemini native video input</td><td>fixed-rate frames + audio — ~3,600 frames per hour at the 1 fps default, re-sent every request</td></tr>
+      <tr><td><code>ffmpeg</code> frame dump every N seconds</td><td>thousands of near-duplicates, unlinked to speech</td></tr>
+      <tr><td>Manual timestamp picking</td><td>requires a human to watch the video first</td></tr>
+      <tr class="highlight"><td><strong>analysis-video</strong></td><td><strong>every distinct screen + its time range + its speech, as one Markdown file</strong></td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section id="tradeoffs">
+  <p class="kicker">Strengths and limits</p>
+  <h2>What it is good at, and what it is not</h2>
+
+  <div class="cols">
+    <div class="card card-good">
+      <h3>Strengths</h3>
+      <ul>
+        <li><strong>Runs entirely locally.</strong> No upload, no API key. The only network access is a one-time Whisper weight download — and a subtitled video never triggers even that.</li>
+        <li><strong>No system dependencies.</strong> PyAV bundles its own decoders; no ffmpeg to install.</li>
+        <li><strong>Adaptive sampling.</strong> Frames are chosen by screen change, not a fixed interval and not timestamps you supply.</li>
+        <li><strong>Token-aware output.</strong> Reading copies cost 4.17× fewer tokens, and <code>context.md</code> states the cost before you open anything.</li>
+        <li><strong>Resumable.</strong> A run cut off by a timeout picks up where it stopped.</li>
+        <li><strong>Agent-native contract.</strong> One JSON object per call, meaningful exit codes, absolute paths, and a <code>next</code> object on every command.</li>
+      </ul>
+    </div>
+    <div class="card card-limit">
+      <h3>Limits</h3>
+      <ul>
+        <li><strong>Screen-stable content only.</strong> Lectures, screencasts, slide decks, coding tutorials, whiteboards. Continuously moving footage produces too many screen changes and is not the target.</li>
+        <li><strong>Disk cost.</strong> The analysis directory is 1.9–2.8× the source, about 4.48 MB per minute. <code>clean</code> reports what is reclaimable before deleting anything.</li>
+        <li><strong>Install size.</strong> 108 MB downloaded / 308 MB on disk; <code>[stt]</code> takes it to 326 MB / 1,180 MB — 476 MB of that a <code>torch</code> this tool never imports, pulled in unconditionally by an upstream dependency.</li>
+        <li><strong>No Windows ARM64.</strong> <code>opencv-python-headless</code> publishes no wheel for it.</li>
+        <li><strong>CUDA path unverified.</strong> The <code>[cuda]</code> extra resolves, but has not been run on real NVIDIA hardware.</li>
+        <li><strong>No translation, and no interpretation.</strong> Dialogue is left in whatever language it is in, and the tool never summarizes — that is the reading agent's job.</li>
+        <li><strong>No format migration.</strong> Analysis directories from an older version are refused with a clear error rather than half-read.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section id="faq">
+  <p class="kicker">FAQ</p>
+  <h2>Questions</h2>
+
+  <details>
+    <summary>Does it upload my video anywhere?</summary>
+    <p>No. Video decoding, scene detection, and transcription all run locally. The only network access is the one-time download of Whisper model weights — and when the transcript comes from a subtitle file or subtitle track, even that never happens, so such a video can be analyzed on a fully offline machine.</p>
+  </details>
+
+  <details>
+    <summary>Claude already summarizes YouTube videos. What is missing?</summary>
+    <p>The screen. That summary comes from the subtitles — fine for a talking-head interview, lossy for anything taught on screen: the slide, the code, the diagram, the equation being worked out. This tool reads the same subtitles, but does not stop there: it restores the visual half and pins each line of speech to the screen it belongs to.</p>
+  </details>
+
+  <details>
+    <summary>Gemini accepts video directly. Why would I use this?</summary>
+    <p>Three reasons. Fixed-rate sampling is the wrong shape for screen-stable content: at the default 1 fps an hour of lecture is about 3,600 frames, nearly all duplicates, and Google's own docs tell you to hand-tune the rate down for lectures — this tool does that adaptively by detecting screen changes. Second, you get a file, not a one-shot API call: context.md can be grepped, indexed for RAG, committed, and re-read for free. Third, it works with models that take no video at all, and it never uploads yours.</p>
+  </details>
+
+  <details>
+    <summary>My video already has subtitles. Will it use them, or run Whisper anyway?</summary>
+    <p>It uses them, as long as they hold up: a sidecar file next to the video or a text track inside the container is preferred over Whisper, and --transcript FILE names one directly. Whisper is then never loaded, which is why that path also needs no [stt] extra and no network. Auto-generated captions and forced foreign-lines-only tracks are rejected, and that is the case where Whisper runs instead.</p>
+  </details>
+
+  <details>
+    <summary>Do I need to install ffmpeg?</summary>
+    <p>No. PyAV bundles its own decoders.</p>
+  </details>
+
+  <details>
+    <summary>How big is the install?</summary>
+    <p>Measured on macOS Apple Silicon: 108 MB downloaded, 308 MB on disk — no whisper backend, no torch. Adding [stt] takes it to 326 MB / 1,180 MB, and 476 MB of that is a torch this tool never imports, pulled in unconditionally by an upstream dependency. On Linux the extra costs about 70 MB rather than 218 MB. Whisper model weights are a separate download on first use.</p>
+  </details>
+
+  <details>
+    <summary>How much disk does the analysis directory take?</summary>
+    <p>More than the video: measured at 1.9 to 2.8 times the source, or about 4.48 MB per minute — roughly 0.27 GB for a one-hour lecture. analysis-video clean reports what is reclaimable before deleting anything; on a measured sample --level images took a directory from 9.8 MB to 1.4 MB. It never touches reviews, transcript.json, the reading copies context.md links to, or frames you ordered with frame --at.</p>
+  </details>
+
+  <details>
+    <summary>Is there an MCP server?</summary>
+    <p>No, deliberately. The CLI already returns structured JSON with an exit-code contract; an MCP wrapper around it would be a one-to-one restatement with an extra process to keep running. install-skill gives agents the same discoverability with none of that.</p>
+  </details>
+
+  <details>
+    <summary>Which video formats work?</summary>
+    <p>Whatever PyAV and FFmpeg decode — MP4, MOV, MKV, WebM, and so on.</p>
+  </details>
+
+  <details>
+    <summary>Does it work on non-slide video?</summary>
+    <p>It is designed for screen-stable content: lectures, screencasts, slide decks, coding tutorials, whiteboard recordings. Continuously moving footage produces many screen changes and is not the target.</p>
+  </details>
+</section>
+
+<section id="get">
+  <h2>Get it</h2>
+  <div class="cta">
+    <a class="btn btn-primary" href="https://github.com/hwanyong/analysis-video"
+       data-umami-event="github" data-umami-event-place="closing"
+       target="_blank" rel="noopener">Read the source on GitHub&nbsp;→</a>
+    <a class="btn" href="https://pypi.org/project/analysis-video/"
+       data-umami-event="pypi" data-umami-event-place="closing"
+       target="_blank" rel="noopener">Install from PyPI&nbsp;→</a>
+  </div>
+  <p class="sub">MIT licensed. Python 3.11–3.14 on macOS, Linux, and Windows x64.</p>
+</section>

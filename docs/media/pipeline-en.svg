@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 268" width="980" height="268" role="img" aria-labelledby="t d" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif">
+<title id="t">The analysis-video pipeline: split, transcribe, frames, context.md, review</title>
+<desc id="d">Five stages in order. split writes a video resource and demuxes subtitle tracks; transcribe prefers subtitles and falls back to Whisper; frames detects screen changes and extracts them; context.md aligns screens with time and dialogue; review is where the agent's analysis is kept.</desc>
+<rect x="0.5" y="0.5" width="979" height="267" rx="14" fill="#0a0d12" stroke="#232a35"/>
+<text x="56" y="96" font-size="14" fill="#8b96a5" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', 'Apple SD Gothic Neo', 'Malgun Gothic', monospace" font-weight="normal" font-style="normal">video</text>
+<rect x="96" y="52" width="158" height="96" rx="8" fill="#070a0e" stroke="#232a35"/>
+<text x="175.0" y="80" font-size="15" fill="#d5dae2" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', 'Apple SD Gothic Neo', 'Malgun Gothic', monospace" font-weight="600" font-style="normal">split</text>
+<text x="175.0" y="106" font-size="11.5" fill="#8b96a5" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif" font-weight="normal" font-style="normal">video resource</text>
+<text x="175.0" y="122" font-size="11.5" fill="#8b96a5" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif" font-weight="normal" font-style="normal">+ subtitle tracks</text>
+<line x1="78" y1="100" x2="84" y2="100" stroke="#232a35" stroke-width="1.6"/>
+<path d="M 91 100 L 82 95.5 L 82 104.5 Z" fill="#232a35"/>
+<rect x="276" y="52" width="158" height="96" rx="8" fill="#070a0e" stroke="#232a35"/>
+<text x="355.0" y="80" font-size="15" fill="#d5dae2" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', 'Apple SD Gothic Neo', 'Malgun Gothic', monospace" font-weight="600" font-style="normal">transcribe</text>
+<text x="355.0" y="106" font-size="11.5" fill="#8b96a5" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif" font-weight="normal" font-style="normal">subtitles first,</text>
+<text x="355.0" y="122" font-size="11.5" fill="#8b96a5" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif" font-weight="normal" font-style="normal">Whisper as fallback</text>
+<line x1="258" y1="100" x2="264" y2="100" stroke="#232a35" stroke-width="1.6"/>
+<path d="M 271 100 L 262 95.5 L 262 104.5 Z" fill="#232a35"/>
+<rect x="456" y="52" width="158" height="96" rx="8" fill="#070a0e" stroke="#232a35"/>
+<text x="535.0" y="80" font-size="15" fill="#d5dae2" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', 'Apple SD Gothic Neo', 'Malgun Gothic', monospace" font-weight="600" font-style="normal">frames</text>
+<text x="535.0" y="106" font-size="11.5" fill="#8b96a5" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif" font-weight="normal" font-style="normal">scene change</text>
+<text x="535.0" y="122" font-size="11.5" fill="#8b96a5" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif" font-weight="normal" font-style="normal">(image ops)</text>
+<line x1="438" y1="100" x2="444" y2="100" stroke="#232a35" stroke-width="1.6"/>
+<path d="M 451 100 L 442 95.5 L 442 104.5 Z" fill="#232a35"/>
+<rect x="636" y="52" width="158" height="96" rx="8" fill="#070a0e" stroke="#232a35"/>
+<text x="715.0" y="80" font-size="15" fill="#d5dae2" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', 'Apple SD Gothic Neo', 'Malgun Gothic', monospace" font-weight="600" font-style="normal">context.md</text>
+<text x="715.0" y="106" font-size="11.5" fill="#8b96a5" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif" font-weight="normal" font-style="normal">screens + time</text>
+<text x="715.0" y="122" font-size="11.5" fill="#8b96a5" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif" font-weight="normal" font-style="normal">+ dialogue</text>
+<line x1="618" y1="100" x2="624" y2="100" stroke="#232a35" stroke-width="1.6"/>
+<path d="M 631 100 L 622 95.5 L 622 104.5 Z" fill="#232a35"/>
+<rect x="816" y="52" width="158" height="96" rx="8" fill="#070a0e" stroke="#3ddbc8"/>
+<text x="895.0" y="80" font-size="15" fill="#3ddbc8" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', 'Apple SD Gothic Neo', 'Malgun Gothic', monospace" font-weight="600" font-style="normal">review</text>
+<text x="895.0" y="106" font-size="11.5" fill="#8b96a5" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif" font-weight="normal" font-style="normal">what your agent</text>
+<text x="895.0" y="122" font-size="11.5" fill="#8b96a5" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif" font-weight="normal" font-style="normal">read and wrote</text>
+<line x1="798" y1="100" x2="804" y2="100" stroke="#232a35" stroke-width="1.6"/>
+<path d="M 811 100 L 802 95.5 L 802 104.5 Z" fill="#232a35"/>
+<line x1="96" y1="176" x2="794" y2="176" stroke="#232a35" stroke-width="1"/>
+<text x="445.0" y="198" font-size="12.5" fill="#8b96a5" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif" font-weight="normal" font-style="normal">image processing and file I/O — no model</text>
+<line x1="816" y1="176" x2="974" y2="176" stroke="#3ddbc8" stroke-width="1"/>
+<text x="895.0" y="198" font-size="12.5" fill="#3ddbc8" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif" font-weight="normal" font-style="normal">your agent</text>
+</svg>

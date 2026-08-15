@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="{{lang}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<title>{{title}}</title>
+<meta name="description" content="{{description}}">
+
+<!-- max-image-preview:large 는 검색 결과에 큰 썸네일을 허용한다. 이게 없으면 Google 은
+     기본값(standard)으로 작은 썸네일만 쓰거나 아예 쓰지 않는다. -->
+<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
+
+<!-- 언어별로 실제 URL 이 나뉘어 있다. 한 URL 안에서 자바스크립트로 언어를 바꾸면
+     크롤러는 두 언어가 섞인 문서 하나를 보게 되고, 어느 쪽 언어로도 제대로 색인되지
+     않는다. x-default 는 "언어가 매칭되지 않는 나머지 전부"가 갈 곳이다. -->
+<link rel="canonical" href="{{canonical}}">
+<link rel="alternate" hreflang="en" href="{{href_en}}">
+<link rel="alternate" hreflang="ko" href="{{href_ko}}">
+<link rel="alternate" hreflang="x-default" href="{{href_en}}">
+
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="analysis-video">
+<meta property="og:url" content="{{canonical}}">
+<meta property="og:title" content="{{title}}">
+<meta property="og:description" content="{{description}}">
+<meta property="og:image" content="{{origin}}/media/og-card.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="{{og_image_alt}}">
+<meta property="og:locale" content="{{og_locale}}">
+<meta property="og:locale:alternate" content="{{og_locale_alt}}">
+
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="{{title}}">
+<meta name="twitter:description" content="{{description}}">
+<meta name="twitter:image" content="{{origin}}/media/og-card.png">
+<meta name="twitter:image:alt" content="{{og_image_alt}}">
+
+<meta name="theme-color" content="#0a0d12">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='18' fill='%230a0d12'/%3E%3Crect x='20' y='20' width='14' height='60' fill='%233ddbc8'/%3E%3Crect x='44' y='22' width='36' height='11' fill='%23d5dae2'/%3E%3Crect x='44' y='44' width='36' height='11' fill='%23d5dae2'/%3E%3Crect x='44' y='66' width='22' height='11' fill='%23d5dae2'/%3E%3C/svg%3E">
+
+<!-- CSS 는 별도 요청 없이 인라인으로 들어온다(site/build.py 가 style.css 를 여기에 넣는다).
+     렌더링을 막는 요청이 하나도 없어야 LCP 가 첫 응답 하나로 끝난다. -->
+<style>{{style}}</style>
+
+{{jsonld}}
+</head>
+<body>
+
+<header class="topbar">
+  <div class="wrap">
+    <a class="brand" href="{{canonical}}">analysis-video</a>
+    <nav aria-label="{{nav_label}}">
+      <a href="https://github.com/hwanyong/analysis-video" data-umami-event="github" data-umami-event-place="nav" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://pypi.org/project/analysis-video/" data-umami-event="pypi" data-umami-event-place="nav" target="_blank" rel="noopener">PyPI</a>
+      <a class="lang" href="{{alt_href}}" hreflang="{{alt_lang}}" lang="{{alt_lang}}">{{alt_label}}</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+{{body}}
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="links">
+      <a href="https://github.com/hwanyong/analysis-video" data-umami-event="github" data-umami-event-place="footer" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://pypi.org/project/analysis-video/" data-umami-event="pypi" data-umami-event-place="footer" target="_blank" rel="noopener">PyPI — analysis-video</a>
+      <a href="https://pypi.org/project/analysis-video-gui/" data-umami-event="pypi" data-umami-event-place="footer-gui" target="_blank" rel="noopener">PyPI — analysis-video-gui</a>
+      <a href="https://github.com/hwanyong/analysis-video/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a>
+    </div>
+    <p>{{footer_note}}</p>
+  </div>
+</footer>
+
+<script>
+// 설치 명령 복사. 이 페이지의 유일한 상호작용이라 파일을 따로 두지 않는다.
+document.querySelectorAll('.copy').forEach(function (btn) {
+  btn.addEventListener('click', function () {
+    var code = btn.parentElement.querySelector('code');
+    if (!code || !navigator.clipboard) return;
+    navigator.clipboard.writeText(code.textContent).then(function () {
+      var was = btn.textContent;
+      btn.textContent = btn.dataset.done;
+      btn.dataset.copied = '1';
+      setTimeout(function () {
+        btn.textContent = was;
+        btn.dataset.copied = '0';
+      }, 1600);
+    });
+  });
+});
+</script>
+
+<!-- Umami Cloud — 이 페이지의 유일한 외부 요청.
+     integrity 미적용: script.js 는 버전 고정 URL 이 아니라 Umami 가 서버측에서 계속
+     갱신하는 엔드포인트다. 해시를 박으면 다음 갱신에서 무음으로 차단돼 계측이 영구
+     정지한다 — 그 편이 더 위험하다.
+     data-tag: germ-warfare 와 websiteId 를 공유하므로(Hobby 플랜은 사이트 1개),
+     이 태그가 두 사이트의 이벤트를 대시보드에서 갈라 주는 유일한 축이다.
+     data-domains: 이 호스트가 아니면 트래커가 아무것도 보내지 않는다. 없으면 로컬
+     미리보기(localhost)와 포크된 저장소의 Pages 배포까지 같은 통계로 들어와,
+     공유 중인 데이터가 조용히 오염된다. -->
+<script defer crossorigin="anonymous"
+        src="https://cloud.umami.is/script.js"
+        data-website-id="{{umami_website_id}}"
+        data-domains="{{umami_domains}}"
+        data-tag="analysis-video"></script>
+
+</body>
+</html>

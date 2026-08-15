@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 268" width="980" height="268" role="img" aria-labelledby="t d" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif">
+<title id="t">analysis-video 파이프라인: split, transcribe, frames, context.md, review</title>
+<desc id="d">순서대로 도는 다섯 단계. split 은 비디오 리소스를 쓰고 자막 트랙을 분리한다. transcribe 는 자막을 우선하고 없으면 Whisper 로 넘어간다. frames 는 화면 변화를 검출해 뽑는다. context.md 는 화면과 시각과 대사를 정렬한다. review 는 에이전트의 분석이 보관되는 자리다.</desc>
+<rect x="0.5" y="0.5" width="979" height="267" rx="14" fill="#0a0d12" stroke="#232a35"/>
+<text x="56" y="96" font-size="14" fill="#8b96a5" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', 'Apple SD Gothic Neo', 'Malgun Gothic', monospace" font-weight="normal" font-style="normal">영상</text>
+<rect x="96" y="52" width="158" height="96" rx="8" fill="#070a0e" stroke="#232a35"/>
+<text x="175.0" y="80" font-size="15" fill="#d5dae2" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', 'Apple SD Gothic Neo', 'Malgun Gothic', monospace" font-weight="600" font-style="normal">split</text>
+<text x="175.0" y="106" font-size="11.5" fill="#8b96a5" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif" font-weight="normal" font-style="normal">비디오 리소스</text>
+<text x="175.0" y="122" font-size="11.5" fill="#8b96a5" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif" font-weight="normal" font-style="normal">+ 자막 트랙</text>
+<line x1="78" y1="100" x2="84" y2="100" stroke="#232a35" stroke-width="1.6"/>
+<path d="M 91 100 L 82 95.5 L 82 104.5 Z" fill="#232a35"/>
+<rect x="276" y="52" width="158" height="96" rx="8" fill="#070a0e" stroke="#232a35"/>
+<text x="355.0" y="80" font-size="15" fill="#d5dae2" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', 'Apple SD Gothic Neo', 'Malgun Gothic', monospace" font-weight="600" font-style="normal">transcribe</text>
+<text x="355.0" y="106" font-size="11.5" fill="#8b96a5" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif" font-weight="normal" font-style="normal">자막 우선,</text>
+<text x="355.0" y="122" font-size="11.5" fill="#8b96a5" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif" font-weight="normal" font-style="normal">없으면 Whisper</text>
+<line x1="258" y1="100" x2="264" y2="100" stroke="#232a35" stroke-width="1.6"/>
+<path d="M 271 100 L 262 95.5 L 262 104.5 Z" fill="#232a35"/>
+<rect x="456" y="52" width="158" height="96" rx="8" fill="#070a0e" stroke="#232a35"/>
+<text x="535.0" y="80" font-size="15" fill="#d5dae2" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', 'Apple SD Gothic Neo', 'Malgun Gothic', monospace" font-weight="600" font-style="normal">frames</text>
+<text x="535.0" y="106" font-size="11.5" fill="#8b96a5" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif" font-weight="normal" font-style="normal">화면 변화 검출</text>
+<text x="535.0" y="122" font-size="11.5" fill="#8b96a5" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif" font-weight="normal" font-style="normal">(이미지 연산)</text>
+<line x1="438" y1="100" x2="444" y2="100" stroke="#232a35" stroke-width="1.6"/>
+<path d="M 451 100 L 442 95.5 L 442 104.5 Z" fill="#232a35"/>
+<rect x="636" y="52" width="158" height="96" rx="8" fill="#070a0e" stroke="#232a35"/>
+<text x="715.0" y="80" font-size="15" fill="#d5dae2" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', 'Apple SD Gothic Neo', 'Malgun Gothic', monospace" font-weight="600" font-style="normal">context.md</text>
+<text x="715.0" y="106" font-size="11.5" fill="#8b96a5" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif" font-weight="normal" font-style="normal">화면 + 시간</text>
+<text x="715.0" y="122" font-size="11.5" fill="#8b96a5" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif" font-weight="normal" font-style="normal">+ 대사</text>
+<line x1="618" y1="100" x2="624" y2="100" stroke="#232a35" stroke-width="1.6"/>
+<path d="M 631 100 L 622 95.5 L 622 104.5 Z" fill="#232a35"/>
+<rect x="816" y="52" width="158" height="96" rx="8" fill="#070a0e" stroke="#3ddbc8"/>
+<text x="895.0" y="80" font-size="15" fill="#3ddbc8" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', 'Apple SD Gothic Neo', 'Malgun Gothic', monospace" font-weight="600" font-style="normal">review</text>
+<text x="895.0" y="106" font-size="11.5" fill="#8b96a5" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif" font-weight="normal" font-style="normal">에이전트가</text>
+<text x="895.0" y="122" font-size="11.5" fill="#8b96a5" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif" font-weight="normal" font-style="normal">읽고 쓴 것</text>
+<line x1="798" y1="100" x2="804" y2="100" stroke="#232a35" stroke-width="1.6"/>
+<path d="M 811 100 L 802 95.5 L 802 104.5 Z" fill="#232a35"/>
+<line x1="96" y1="176" x2="794" y2="176" stroke="#232a35" stroke-width="1"/>
+<text x="445.0" y="198" font-size="12.5" fill="#8b96a5" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif" font-weight="normal" font-style="normal">이미지 연산과 파일 입출력 — 모델 없음</text>
+<line x1="816" y1="176" x2="974" y2="176" stroke="#3ddbc8" stroke-width="1"/>
+<text x="895.0" y="198" font-size="12.5" fill="#3ddbc8" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif" font-weight="normal" font-style="normal">당신의 에이전트</text>
+</svg>

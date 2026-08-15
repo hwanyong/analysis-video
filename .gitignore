@@ -10,6 +10,10 @@ build/
 testdata/
 debug_out/
 *.analysis/
+
+# 랜딩 페이지 빌드 산출물 — site/build.py 가 매번 다시 만든다(원본은 site/).
+_site/
+
 # 개인 도구 상태 — 공개 저장소에 실려 나가면 안 된다.
 # 프로젝트로 공유할 설정(.claude/settings.json 등)이 생기면 그때 예외로 열 것.
 .claude/

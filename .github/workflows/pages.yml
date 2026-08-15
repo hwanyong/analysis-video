@@ -1,0 +1,71 @@
+name: pages
+
+# 랜딩 페이지를 https://hwanyong.github.io/analysis-video/ 로 배포한다.
+#
+# 경로는 저장소 이름에서 자동으로 파생된다 — hwanyong.github.io 저장소는 건드리지 않는다.
+# 사용자 페이지(hwanyong.github.io)와 프로젝트 페이지(이 저장소)는 서로 다른 배포이고,
+# 같은 도메인을 경로로 나눠 쓸 뿐이다.
+#
+# 액션 핀 규칙은 ci.yml 과 같다 — 공식 액션은 이동하는 메이저 태그로 핀한다.
+# Pages 액션들의 현재 메이저는 configure v6 / upload v5 / deploy v5 다. 오래된 안내
+# 문서가 아직 v3·v4 를 예시로 들고 있으니 복사해 오지 말 것.
+
+on:
+  push:
+    branches: [main]
+    # 랜딩과 무관한 커밋마다 재배포하지 않는다. pyproject.toml 이 목록에 있는 이유는
+    # 구조화 데이터의 softwareVersion 을 build.py 가 거기서 읽어 오기 때문이다 —
+    # 릴리스로 버전이 오르면 랜딩도 따라 올라야 한다.
+    paths:
+      - 'site/**'
+      - 'docs/media/**'
+      - 'packages/core/pyproject.toml'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 배포는 취소하지 않는다. 밀어내기가 연달아 들어와도 진행 중인 배포를 끊으면
+# Pages 가 중간 상태로 남을 수 있다 — 뒤엣것이 큐에서 기다리는 편이 낫다.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # site/build.py 는 표준 라이브러리만 쓴다(tomllib 때문에 3.11 이상).
+      # uv sync 가 필요 없으므로 워크스페이스 전체를 세우지 않는다.
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: build
+        run: python site/build.py
+
+      # enablement: true 는 저장소에 Pages 가 아직 켜져 있지 않을 때 켜 준다.
+      # 이게 없으면 첫 실행이 deploy 단계에서 "Get Pages site failed" 로 죽는데,
+      # 그 메시지만 보고 원인이 설정이라는 걸 알기 어렵다.
+      - uses: actions/configure-pages@v6
+        with:
+          enablement: true
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

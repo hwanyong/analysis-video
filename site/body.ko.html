@@ -1,0 +1,473 @@
+<section class="hero">
+  <h1>analysis-video</h1>
+  <p class="tagline">영상을 AI가 읽는 컨텍스트로.</p>
+
+  <p class="lede">강의·스크린캐스트·슬라이드 영상을 LLM이 실제로 읽을 수 있는 마크다운 파일
+  하나로 바꿉니다 — <strong>키프레임, 시각, 대사를 화면 단위로 정렬</strong>해서. 전부 사용자
+  기기 안에서만 도는 명령줄 도구입니다.</p>
+
+  <div class="cmd">
+    <code>uvx analysis-video@latest analyze lecture.mp4</code>
+    <button class="copy" type="button" data-done="복사됨"
+            data-umami-event="copy-install" data-umami-event-place="hero">복사</button>
+  </div>
+
+  <div class="cta">
+    <a class="btn btn-primary" href="https://github.com/hwanyong/analysis-video"
+       data-umami-event="github" data-umami-event-place="hero"
+       target="_blank" rel="noopener">GitHub&nbsp;→</a>
+    <a class="btn" href="https://pypi.org/project/analysis-video/"
+       data-umami-event="pypi" data-umami-event-place="hero"
+       target="_blank" rel="noopener">PyPI&nbsp;→</a>
+  </div>
+
+  <ul class="facts">
+    <li>API 키 불필요</li>
+    <li>업로드 없음</li>
+    <li>ffmpeg 설치 불필요</li>
+    <li>Python 3.11–3.14</li>
+    <li>MIT</li>
+  </ul>
+</section>
+
+<section id="why">
+  <p class="kicker">문제</p>
+  <h2>자막은 영상의 절반입니다</h2>
+  <p class="sub">AI에게 강의 영상을 분석해 달라고 하면 손에 들어오는 건 자막뿐입니다 —
+  말한 것만 남고, 화면에 쓰고 그리고 코딩하고 띄운 것은 전부 사라집니다.</p>
+
+  <p>슬라이드로 하는 수업은 <strong>주장</strong>을 화면에 놓고 <strong>근거</strong>를 말로
+  합니다. 자막은 그 후반부의 훌륭한 기록입니다 — 사람이 적었으니 고유명사도 숫자도 제대로
+  적혀 있고, 그래서 이 도구도 자막이 있으면 그것부터 읽습니다. 하지만 자막 어디에도
+  <em>어느 문장이 어느 슬라이드에 속했는지</em>는 적혀 있지 않습니다. 프레임만 있으면 설명이
+  사라집니다. 둘 다, 정렬된 채로 필요합니다.</p>
+
+  <p><code>analysis-video</code>는 고정 간격이 아니라 <strong>화면이 얼마나 바뀌었는지</strong>를
+  기준으로 프레임을 뽑고, 서로 다른 모든 화면의 이미지와 그 화면이 떠 있던 시간 구간, 그동안
+  나온 말을 마크다운 파일 하나에 적습니다 — grep 하고, 색인하고, 버전 관리하고, 아무 모델에나
+  그대로 넘길 수 있는 파일입니다.</p>
+</section>
+
+<section id="output">
+  <p class="kicker">산출물</p>
+  <h2>마크다운 하나, 한 항목에 한 화면</h2>
+
+  <pre><code>## 63.13-87.73s
+![](read/scene_020_t0063.13.jpg)
+![](read/scene_021_t0087.70.jpg)
+N1 없이 커지면 BN이라는 값도 당연히 1 없이 커지게 됩니다. ...</code></pre>
+
+  <figure>
+    <img src="{{base}}/media/context-example.png" width="1440" height="1126" loading="lazy" decoding="async"
+         alt="context.md 한 조각과 그 이미지 링크가 실제로 가리키는 두 키프레임 — 비어 있는 칠판과 판서가 끝난 같은 칠판.">
+    <figcaption>데모 영상의 한 화면입니다. 왼쪽 마크다운은 실제 출력 그대로이고, 두 이미지는 그
+    <code>![]()</code> 줄이 가리키는 파일입니다. 칠판이 한 줄씩 채워졌기 때문에 도구는
+    <strong>빈 칠판과 완성된 칠판을 둘 다</strong> 남겼습니다 — 컷 검출기만 있었다면 빈 칠판
+    하나만 남았을 겁니다.</figcaption>
+  </figure>
+
+  <p>한 항목 = 한 화면, 또는 한 문장이 걸쳐 있던 화면들입니다. 한 화면에 이미지가 두 장이면 그
+  화면의 첫 등장과 마지막 등장이고, 판서나 점진적 슬라이드에서는 두 번째가 완성된 상태입니다.
+  <strong>대사는 화면들에 정확히 한 번씩 배분되며, 버려지는 문장이 없습니다.</strong></p>
+
+  <p>링크된 이미지는 축소된 <strong>읽기용 사본</strong>이고, 원본은 <code>frames/</code>에
+  원해상도로 남습니다. 이건 디스크가 아니라 컨텍스트 창에 대한 결정입니다 — 실측으로 읽기용
+  사본은 원해상도 프레임보다 <strong>토큰을 4.17배 덜</strong> 씁니다. 한 시간짜리 강의가
+  1M 토큰 창에 들어가느냐 마느냐를 가르는 차이입니다. <code>context.md</code>의 첫 문단이 이미지
+  개수와 전부 여는 데 드는 대략의 비용을 적어 두므로, 모델은 하나라도 열기 <em>전에</em> 몇 장을
+  열지 정할 수 있습니다.</p>
+</section>
+
+<section id="workflow">
+  <p class="kicker">AI 워크플로 안에서</p>
+  <h2>AI 에이전트가 돌립니다 — 당신은 묻기만 합니다</h2>
+  <p class="sub">이 명령들을 직접 칠 일은 없습니다. 영상에 대해 에이전트에게 물으면, 에이전트가
+  <code>analysis-video</code>를 집어 들고, 읽을 수 있는 형태로 받아서, <strong>화면에 있던
+  것</strong>을 근거로 답합니다 — 그 위로 흘러간 말만이 아니라.</p>
+
+  <h3>무엇이 달라지는가</h3>
+  <div class="scroll-x">
+  <table>
+    <thead><tr><th></th><th>자막만 있을 때</th><th>analysis-video 를 쓸 때</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>에이전트가<br>받는 것</td>
+        <td>“…보시다시피 <strong>여기서</strong> 정규화된 값이 나옵니다”</td>
+        <td><code>## 63.13-87.73s</code><br>[빈 칠판] [판서가 끝난 칠판]<br>+ 왼쪽과 똑같은 대사</td>
+      </tr>
+      <tr>
+        <td>답할 수<br>있는 것</td>
+        <td>말한 내용까지.<br><strong>“여기”가 무엇인지 모릅니다.</strong></td>
+        <td>“여기”가 가리킨 수식과,<br>그것이 써지는 데 걸린 24초까지</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p>슬라이드 위의 설명은 <strong>이것</strong>·<strong>여기</strong>·<strong>저 항</strong>
+  같은 지시어로 가득합니다. 자막은 그 말을 남기고 <em>가리킨 대상</em>을 버립니다. 이 도구가
+  되돌려 놓는 것이 그 절반입니다.</p>
+
+  <h3>루프 전체</h3>
+  <figure>
+    <img src="{{base}}/media/loop-ko.svg" width="900" height="638" loading="lazy" decoding="async"
+         alt="세 갈래 — 당신, AI 에이전트, analysis-video. 요약을 요청하면 에이전트가 analyze 를 실행하고, 도구는 split·transcribe·화면 변화 검출을 거쳐 context.md 와 next 객체(do=read, 이미지 6장, 2,652 토큰)를 돌려준다. 에이전트가 읽고 판단하고 쓰는 단계만 모델을 필요로 하며, 그 결과를 review 로 저장하면 next 가 done 이 된다.">
+  </figure>
+
+  <p>가운데 상자(<code>읽고 / 판단하고 / 쓴다</code>)가 <strong>모델이 필요한 유일한
+  단계</strong>이고, 도구 안에는 모델이 없습니다. 나머지는 전부 이미지 연산과 파일 입출력입니다.</p>
+
+  <p>에이전트는 다음에 뭘 할지 스스로 계산하지 않습니다 — <strong>모든 명령이 같은
+  <code>next</code> 객체로 끝나며</strong> 실행할지, 읽을지, 답할지를 알려 줍니다. 그리고
+  <code>next</code>는 <em>이미지를 열기 전에</em> 가격표를 먼저 줍니다:
+  <code>{"images": 6, "image_tokens": 2652}</code>. 컨텍스트 창이 빠듯한 모델은 오래 떠 있던
+  화면만 골라 열고 나머지를 건너뛸 수 있습니다 — 다 열고 나서 후회하는 대신.</p>
+
+  <h3>이렇게 물으면 됩니다</h3>
+  <div class="scroll-x">
+  <table>
+    <thead><tr><th>당신이 하는 말</th><th>에이전트가 하는 일</th><th>손에 남는 것</th></tr></thead>
+    <tbody>
+      <tr><td>“<code>lecture.mp4</code> 요약해줘 — 슬라이드에 있던 것도 포함해서”</td><td><code>analyze</code> 실행 → <code>context.md</code> 읽기 → 정리</td><td>63초 지점의 칠판을 인용하는 요약. 자막 요약이 아님</td></tr>
+      <tr><td>“<code>tutorial.mp4</code>에 나온 코드 전부 뽑아줘”</td><td>오래 떠 있던 화면만 골라서 엶</td><td>코드 조각들 + 각각이 나온 시각</td></tr>
+      <tr><td>“<code>standup.mp4</code>에서 뭐가 결정됐어?”</td><td>같은 루프 한 바퀴</td><td>결정 사항 + 그때 화면에 떠 있던 것</td></tr>
+      <tr><td>“이 강의 폴더 통째로 검색되게 만들어줘”</td><td>파일마다 <code>analyze</code></td><td>영상별 grep 가능한 마크다운, 이미지 링크 유지</td></tr>
+      <tr><td>“2~5분, 15~20분 구간만”</td><td><code>--range 120-300 --range 900-1200</code></td><td>독립된 분석 단위 두 개. 절대 병합되지 않음</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>무엇이 남는가</h3>
+  <p>남는 건 답변만이 아닙니다. 에이전트가 쓴 분석문은 영상 옆
+  <code>reviews/&lt;단위&gt;.md</code>에 저장되고, 그때 읽은 <code>context.md</code>의 sha256이
+  함께 찍힙니다. 다음 주에 다시 물으면 에이전트는 이미지를 전부 다시 여는 대신 그 글을
+  재사용합니다. 임계를 바꿔 재검출하면 그 분석문은 스스로를 <strong>stale</strong>로 표시합니다 —
+  옛 분석이 현재 사실인 척 조용히 통과하지 않고, 루프가 다시 읽으라고 요구합니다.</p>
+  <p><strong>분석은 <code>context.md</code>가 생겼을 때 끝나는 게 아닙니다.</strong> 모든 단위에
+  자기가 읽은 것과 여전히 일치하는 리뷰가 있을 때 끝납니다 — 그 순간
+  <code>next.do</code>가 <code>"done"</code>이 됩니다.</p>
+</section>
+
+<section id="install">
+  <p class="kicker">설치</p>
+  <h2>세 가지 방법, ffmpeg 없이</h2>
+  <p class="sub">디코딩은 자체 바이너리를 함께 배포하는 PyAV가 합니다. 시스템 수준에서 설치할
+  것이 없습니다.</p>
+
+  <div class="cmd">
+    <code>uvx analysis-video@latest analyze lecture.mp4</code>
+    <button class="copy" type="button" data-done="복사됨"
+            data-umami-event="copy-install" data-umami-event-place="install-uvx">복사</button>
+  </div>
+  <div class="cmd">
+    <code>uv tool install analysis-video</code>
+    <button class="copy" type="button" data-done="복사됨"
+            data-umami-event="copy-install" data-umami-event-place="install-tool">복사</button>
+  </div>
+  <div class="cmd">
+    <code>pip install analysis-video</code>
+    <button class="copy" type="button" data-done="복사됨"
+            data-umami-event="copy-install" data-umami-event-place="install-pip">복사</button>
+  </div>
+
+  <p><code>@latest</code>가 중요합니다 — <code>uvx</code>는 처음 해석한 버전을 캐시해 두고, 따로
+  말하지 않는 한 계속 그 버전을 실행합니다.</p>
+
+  <h3>음성 인식이 필요한가요?</h3>
+  <p>기본 설치에는 <strong>whisper 백엔드가 없고, 대부분의 영상은 애초에 필요하지 않습니다.</strong>
+  영상 옆에 자막 파일이 있거나 컨테이너 안에 텍스트 트랙이 있으면 대사는 거기서 나옵니다 —
+  모델을 올리지 않고, 가중치를 내려받지 않고, 네트워크를 건드리지 않습니다.</p>
+
+  <div class="scroll-x">
+  <table>
+    <thead><tr><th>영상 상태</th><th>설치할 것</th></tr></thead>
+    <tbody>
+      <tr><td>옆에 자막 파일이 있음(<code>lecture.ko.srt</code>) 또는 컨테이너 안에 텍스트 트랙이 있음</td><td><strong>기본 설치</strong> — 오프라인에서 끝까지 분석됨</td></tr>
+      <tr><td><code>--transcript FILE</code>로 자막을 직접 지정</td><td><strong>기본 설치</strong></td></tr>
+      <tr><td>쓸 만한 자막이 어디에도 없음</td><td><code>analysis-video[stt]</code></td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p>잘못 골라도 손해가 없습니다. <code>analysis-video doctor</code>는 없는 기능을 알려 주면서도
+  <strong>0으로 종료</strong>하고, 실패하는 건 실제로 whisper까지 도달한 전사뿐입니다 —
+  종료 코드 <strong>4</strong>와 함께 <code>error.hint</code>에 설치 명령이 담깁니다.</p>
+</section>
+
+<section id="agent">
+  <p class="kicker">설치, 두 번째</p>
+  <h2>한 줄이면 에이전트가 이 루프를 배웁니다</h2>
+  <p class="sub">패키지를 설치하면 PATH 에 명령이 하나 생깁니다. 이 명령은 <strong>위 루프를
+  에이전트의 머릿속에</strong> 넣습니다 — 한 번만 하면 앞으로 여는 모든 프로젝트 폴더에서
+  적용됩니다.</p>
+
+  <div class="cmd">
+    <code>uvx analysis-video@latest install-skill</code>
+    <button class="copy" type="button" data-done="복사됨"
+            data-umami-event="copy-install" data-umami-event-place="skill">복사</button>
+  </div>
+
+  <p><code>~/.claude/skills/analysis-video/</code>에 짧은 <strong>Claude Code 스킬</strong>을
+  씁니다. 도구를 설명하는 문서가 아니라 <strong>루프를 실행하라는 지시문</strong>입니다 —
+  먼저 <code>agent-guide</code>를 부르고, <code>next</code>가 <code>done</code>이 될 때까지
+  따라가고, <code>context.md</code>에서 멈추지 말라는. 플러그인도 마켓플레이스도
+  <strong>띄워 둘 MCP 서버도 없습니다.</strong> 스킬 기능이 없는 환경 — Codex, Cline, Cursor,
+  그 밖에 <code>AGENTS.md</code>를 읽는 모든 것 — 을 위해서는:</p>
+
+  <div class="cmd">
+    <code>analysis-video install-skill --agents-file AGENTS.md</code>
+    <button class="copy" type="button" data-done="복사됨"
+            data-umami-event="copy-install" data-umami-event-place="skill-agents">복사</button>
+  </div>
+
+  <p>마커 사이에 안내를 넣고, 다시 실행하면 그 블록을 <strong>교체</strong>합니다. 업그레이드해도
+  규칙 파일에 상충하는 사본이 두 벌 남지 않습니다. 에이전트가 참조하는 기준 문서는
+  <code>analysis-video agent-guide</code>이고, 실제 코드 상수에서 생성됩니다 — 임계값을 바꾸면
+  문서가 같이 바뀝니다. 에이전트는 언제나 실제 값을 읽지, 낡은 사본을 읽지 않습니다.</p>
+</section>
+
+<section id="usage">
+  <p class="kicker">사용법</p>
+  <h2>분석하고, 읽히고, 남긴다</h2>
+
+  <pre><code># 1 — 분석 (스테이지는 순서대로 돌고, 각각 재개 가능)
+analysis-video analyze lecture.mp4
+# → lecture.mp4.analysis/runs/full/context.md
+
+# 2 — 에이전트가 context.md 를 읽고 분석을 되돌려 씀
+analysis-video review lecture.mp4 --write -
+
+# 3 — 다시 만들 수 있는 것만 회수
+analysis-video clean lecture.mp4 --level images
+
+# 영상 일부만? 각 구간은 독립 단위이고 절대 병합되지 않음
+analysis-video analyze lecture.mp4 --range 120-300 --range 900-1200
+
+# 검출기가 고를 이유가 없던 프레임이 필요할 때
+analysis-video frame lecture.mp4 --at 421.8 --reason "why this moment matters"</code></pre>
+
+  <p><strong>사람이 아니라 AI 에이전트를 1차 소비자로 삼고 만들었습니다</strong> — 호출 한 번에
+  stdout으로 JSON 객체 정확히 하나, 종료 코드만으로 판단 가능(<code>0</code> 정상 ·
+  <code>2</code> 잘못된 입력 · <code>3</code> 스테이지 순서 위반 · <code>4</code> 필요한 것이 없음),
+  경로는 전부 절대 경로, 스테이지는 재개 가능. 모든 명령이 같은 <code>next</code> 객체로 끝나기
+  때문에 호출한 쪽이 다음 단계를 스스로 계산할 일이 없습니다.</p>
+</section>
+
+<section id="how">
+  <p class="kicker">동작 방식</p>
+  <h2>다섯 단계, 그 안에 모델은 없다</h2>
+
+  <figure>
+    <img src="{{base}}/media/pipeline-ko.svg" width="980" height="268" loading="lazy" decoding="async"
+         alt="순서대로 도는 다섯 단계: split 은 비디오 리소스를 쓰고 자막 트랙을 분리하고, transcribe 는 자막을 우선하며 없으면 Whisper 로 넘어가고, frames 는 이미지 연산으로 화면 변화를 검출하고, context.md 는 화면과 시간과 대사를 담고, review 는 에이전트가 읽고 쓴 것을 담는다. 앞의 넷은 모델 없는 이미지 연산과 파일 입출력이고, review 만 에이전트의 몫이다.">
+  </figure>
+
+  <p><strong>이 도구는 아무것도 해석하지 않습니다.</strong> 파이프라인 어디에도 LLM 호출이
+  없습니다 — 자막 파일은 적힌 그대로 읽고, Whisper는 음성 인식 모델이고, 프레임 검출은 픽셀
+  연산입니다. 도구가 만드는 건 <em>읽을 수 있는 재료</em>이고, 그 내용이 무엇을 <em>뜻하는지</em>
+  판단하는 일은 <code>context.md</code>를 읽는 AI 에이전트가 합니다. 사슬이 <code>review</code>에서
+  끝나는 이유가 그것입니다 — 해석은 도구 밖에서 일어나고, <code>review</code>는 그 해석이 대화
+  세션과 함께 증발하지 않도록 보관되는 자리입니다.</p>
+
+  <figure>
+    <img src="{{base}}/media/gui-timeline.png" width="1400" height="760" loading="lazy" decoding="async"
+         alt="선택 설치 GUI의 타임라인 창 — 세 가지 검출 신호를 각자의 기준선과 함께 그린 그래프. 네 개의 스파이크는 슬라이드 컷, 완만한 상승은 칠판이 채워지는 구간.">
+    <figcaption>선택 설치 GUI(<code>analysis-video-gui</code>)가 세 검출 신호를 기준선과 함께
+    그린 화면입니다. 네 개의 스파이크는 슬라이드 컷이고, 10초부터 29초까지의 완만한 상승은 칠판이
+    채워지는 구간 — 컷 검출기가 볼 수 없는 변화입니다.</figcaption>
+  </figure>
+
+  <h3>대사는 어디서 오는가</h3>
+  <p>사람이 적은 자막은 어떤 인식기보다 낫기 때문에, 대사는 <strong>먼저 되는 것</strong>에서
+  가져옵니다 — 직접 지정한 <code>--transcript FILE</code>, 그다음 영상 옆의 모든 자막 파일
+  (<code>.srt</code> / <code>.vtt</code> / <code>.smi</code>)과 컨테이너 안의 모든 텍스트 트랙을
+  <em>언어를 첫 번째 기준</em>으로 한 줄로 세운 목록, 마지막이 Whisper입니다. 영상 길이의 30% 미만을
+  덮거나, 큐가 5개 미만이거나, 영상 끝을 넘어가거나, 30% 넘게 롤업(앞 문장을 반복하며 늘어나는 형태 —
+  <strong>자동 생성 자막</strong>의 특징)인 후보는 거부되고 다음 후보가 열립니다.
+  <code>transcript.json</code>에 어떤 후보가 왜 넘어갔는지 전부 기록되므로 Whisper가 왜 돌았는지
+  항상 알 수 있습니다. <strong>번역은 하지 않습니다</strong> — 언어가 어긋나면 조용히 고치지 않고
+  어긋났다고 보고합니다.</p>
+</section>
+
+<section id="verify">
+  <p class="kicker">검출을 믿는 근거</p>
+  <h2>맞는 화면을 남겼다는 걸 어떻게 아나</h2>
+  <p class="sub">프레임 선택은 모델이 아니라 픽셀 연산입니다 — 하지만 그건 질문을 옮길 뿐입니다.
+  검출기는 자기 결과가 옳은지 스스로 판정할 수 없습니다. 선택 설치 GUI는 <strong>사람이</strong>
+  그것을 판정하고, 그 판정을 숫자로 바꾸라고 있습니다.</p>
+
+  <figure>
+    <img src="{{base}}/media/gui-workbench.png" width="1400" height="1284" loading="lazy" decoding="async"
+         alt="analysis-video GUI 의 창 일곱 개가 데모 클립에 대해 모두 열려 있는 화면: Player, 추출된 프레임 6장을 시각·라벨과 함께 보여 주는 Gallery, Frame sync, 현재 대사가 굵게 표시된 Dialogue sync, 정답 플래그를 하나도 찍지 않아 정밀도·재현율이 대시로 표시된 Compare report, 원본·자막·언어와 열린 창 목록을 관리하는 허브, 그리고 frames·rejected·requested·화면 시작·STT·flags 레인과 세 검출 신호를 기준선과 함께 그리는 Timeline.">
+    <figcaption>이 저장소의 데모 클립을 연 <code>analysis-video-gui</code> — 창 일곱 개가 각각
+    독립된 OS 창이라 원하는 모니터에 아무렇게나 배치할 수 있습니다. 오른쪽 허브는 자기 캔버스가
+    없습니다. 원본과 분석 단위(<code>--range</code>로 잘라 만든 시간 구간, 없으면
+    <code>full</code> 하나), 그리고 어떤 창이 열려 있는지를 관리할 뿐입니다.
+    <strong>비교 리포트에 0%가 아니라 대시가 떠 있는 것</strong>은 이 화면에서 정답 플래그를
+    하나도 찍지 않았기 때문입니다 — 정답지 없이 매긴 점수는 뒤에 아무것도 없는 숫자라
+    0.0%로 내보내지 않습니다.</figcaption>
+  </figure>
+
+  <h3>“여기선 <em>반드시</em> 뽑혔어야 한다”를 찍고, 검출기를 그것으로 채점한다</h3>
+  <p>영상을 보다가 프레임이 나왔어야 할 순간에 <strong>F</strong>를 누릅니다. 그 순간이
+  <strong>정답 플래그</strong>로 <code>user_flags.json</code>에 기록됩니다. Compare report는
+  지정한 허용오차 안에서 그 플래그들과 검출기가 실제로 남긴 프레임을 대조해 두 수치를 냅니다:</p>
+
+  <div class="scroll-x">
+  <table>
+    <thead><tr><th></th><th>세는 것</th></tr></thead>
+    <tbody>
+      <tr><td><strong>재현율<br>recall</strong></td><td><em>당신이</em> 찍은 플래그 중 검출기가 찾아낸 비율 — <strong>놓친 것</strong></td></tr>
+      <tr><td><strong>정밀도<br>precision</strong></td><td>검출 중 당신의 플래그 근처에 떨어진 비율 — <strong>쓸데없이 뽑은 것</strong></td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p>플래그를 하나도 안 찍었으면 둘 다 비어 있습니다 — 정답지 없이 매긴 점수는 뒤에 아무것도 없는
+  숫자니까요. 허용오차 기본값은 <strong>2초</strong>이고, <strong>행을 클릭하면 재생이 그 행의
+  정답 플래그 시각으로 이동합니다</strong> — 숫자에서 언제나 그 숫자가 가리키는 화면으로 되짚을 수
+  있습니다. <code>Export compare.json</code>으로 대조 결과를 파일로 뽑으면 임계값 변경을 인상이
+  아니라 diff로 이야기할 수 있습니다. <strong>“컷 면적 임계를 올려라”가 감이 아니라 측정이 되는
+  지점이 여기입니다.</strong></p>
+
+  <h3>CLI를 따라옵니다</h3>
+  <p>창들은 분석 디렉터리 — <code>metadata.json</code>, <code>transcript.json</code>, 그리고 출력
+  폴더 자체 — 를 감시하다가 바뀌면 다시 그립니다. 터미널에서 임계값을 바꿔
+  <code>analysis-video analyze</code>를 다시 돌리면 타임라인·갤러리·리포트가 알아서 갱신됩니다.
+  다시 열 것이 없고, 폴링 루프도 없습니다. <code>frames</code>는 단위 폴더를 지우고 다시 만들기
+  때문에, 재실행이 도는 동안 그 창들은 잠시 비었다가 끝나는 순간 새 결과로 채워집니다. 재시작이
+  필요한 경우는 하나입니다 — 분석 단위가 아직 없는 디렉터리에서 GUI를 먼저 열었다면, 그 첫
+  <code>frames</code> 실행은 자동으로 잡히지 않습니다.</p>
+  <p>분석의 본체 — <code>state.json</code>, <code>transcript.json</code>,
+  <code>metadata.json</code>, <code>frames.json</code> — 는 임시 경로에 쓰고 이름을 한 번 바꿔
+  갈아 끼웁니다. 그래서 타임아웃으로 죽은 실행이 직전 산출물을 잘라 놓지 않습니다.
+  <strong>이건 GUI 기능이 아니라 코어의 성질이라</strong>, 창을 한 번도 열지 않는 사람에게도 그대로
+  적용됩니다. 다만 전부는 아닙니다 — 검출 캐시와 단위 목록, 그리고 에이전트가 읽는
+  <code>context.md</code>는 아직 그냥 씁니다. 다시 돌리면 만들어지는 파생물이기 때문입니다.
+  그래서 GUI도 원자성에 기대지 않습니다: 읽다가 쓰이는 중인 파일을 만나면 그 판을 비워 두고
+  다음 감시 이벤트에서 다시 읽습니다.</p>
+
+  <p class="sub"><strong>이 도구를 쓰는 데 이것들이 필요하지는 않습니다.</strong> GUI는 버전이
+  따로 도는 별도 패키지(<code>analysis-video-gui</code>)라 CLI만 쓰는 사람은 Qt를 내려받지
+  않습니다. “맞는 화면을 골랐나”에 대한 정직한 답이 느낌이 아니라 숫자여야 하는 순간을 위해
+  있습니다.</p>
+</section>
+
+<section id="compare">
+  <p class="kicker">비교</p>
+  <h2>각 방법이 남겨 주는 것</h2>
+
+  <div class="scroll-x">
+  <table>
+    <thead><tr><th>방법</th><th>손에 남는 것</th></tr></thead>
+    <tbody>
+      <tr><td>자막만 — YouTube에 대한 에이전트의 일반적 대응</td><td>말한 것만. 슬라이드·코드·도식·판서 전부 소실</td></tr>
+      <tr><td>Claude Messages API</td><td>영상이 아니라 이미지 — 애니메이션 형식은 <strong>첫 프레임만</strong> 읽힘</td></tr>
+      <tr><td>Claude Cowork “Record a skill”</td><td>스크린샷 + 입력 이벤트 + 내레이션. 녹화본은 변환 후 <strong>보관되지 않음</strong></td></tr>
+      <tr><td>Gemini 네이티브 비디오 입력</td><td>고정 간격 프레임 + 오디오 — 기본 1fps로 시간당 약 3,600장, 요청마다 재전송</td></tr>
+      <tr><td>N초마다 <code>ffmpeg</code> 프레임 덤프</td><td>거의 같은 이미지 수천 장, 말과 연결되지 않음</td></tr>
+      <tr><td>수동 타임스탬프 선정</td><td>사람이 먼저 영상을 다 봐야 함</td></tr>
+      <tr class="highlight"><td><strong>analysis-video</strong></td><td><strong>서로 다른 모든 화면 + 시간 구간 + 그동안의 말, 마크다운 하나로</strong></td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section id="tradeoffs">
+  <p class="kicker">장점과 한계</p>
+  <h2>잘하는 것, 그리고 못하는 것</h2>
+
+  <div class="cols">
+    <div class="card card-good">
+      <h3>장점</h3>
+      <ul>
+        <li><strong>전부 로컬에서 돕니다.</strong> 업로드도 API 키도 없습니다. 네트워크를 쓰는 건 Whisper 가중치를 처음 한 번 내려받을 때뿐이고, 자막이 있는 영상은 그것조차 일어나지 않습니다.</li>
+        <li><strong>시스템 의존성 없음.</strong> PyAV가 디코더를 함께 배포하므로 ffmpeg를 설치할 필요가 없습니다.</li>
+        <li><strong>적응형 샘플링.</strong> 고정 간격도, 사용자가 넘긴 타임스탬프도 아닌 화면 변화량으로 프레임을 고릅니다.</li>
+        <li><strong>토큰을 아는 산출물.</strong> 읽기용 사본은 토큰을 4.17배 덜 쓰고, <code>context.md</code>가 열기 전에 비용을 먼저 알려 줍니다.</li>
+        <li><strong>재개 가능.</strong> 타임아웃으로 끊긴 실행은 끊긴 자리에서 이어집니다.</li>
+        <li><strong>에이전트 네이티브 계약.</strong> 호출당 JSON 하나, 의미 있는 종료 코드, 절대 경로, 그리고 모든 명령에 붙는 <code>next</code> 객체.</li>
+      </ul>
+    </div>
+    <div class="card card-limit">
+      <h3>한계</h3>
+      <ul>
+        <li><strong>화면이 정적인 콘텐츠 전용.</strong> 강의·스크린캐스트·슬라이드·코딩 튜토리얼·판서 녹화가 대상입니다. 계속 움직이는 영상은 화면 변화가 너무 많아 대상이 아닙니다.</li>
+        <li><strong>디스크 비용.</strong> 분석 디렉터리가 원본의 1.9–2.8배, 분당 약 4.48MB입니다. <code>clean</code>이 지우기 전에 회수 가능량을 먼저 보고합니다.</li>
+        <li><strong>설치 크기.</strong> 다운로드 108MB / 디스크 308MB이고, <code>[stt]</code>를 붙이면 326MB / 1,180MB가 됩니다. 그중 476MB는 이 도구가 import조차 하지 않는 <code>torch</code>로, 상위 의존성이 조건 없이 끌고 옵니다.</li>
+        <li><strong>Windows ARM64 미지원.</strong> <code>opencv-python-headless</code>가 해당 조합의 휠을 배포하지 않습니다.</li>
+        <li><strong>CUDA 경로 미검증.</strong> <code>[cuda]</code> extra는 설치가 해석되지만 실제 NVIDIA 하드웨어에서 돌려본 적이 없습니다.</li>
+        <li><strong>번역도, 해석도 하지 않습니다.</strong> 대사는 원래 언어 그대로 두고, 요약도 하지 않습니다 — 그건 읽는 에이전트의 몫입니다.</li>
+        <li><strong>포맷 마이그레이션 없음.</strong> 옛 버전이 만든 분석 디렉터리는 반쯤 읽히는 대신 명확한 오류로 거부됩니다.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section id="faq">
+  <p class="kicker">자주 묻는 질문</p>
+  <h2>질문</h2>
+
+  <details>
+    <summary>제 영상이 어딘가로 업로드되나요?</summary>
+    <p>아니요. 영상 디코딩, 장면 검출, 전사 모두 로컬에서 돕니다. 네트워크를 쓰는 건 Whisper 모델 가중치를 처음 한 번 내려받을 때뿐이고, 대사가 자막 파일이나 자막 트랙에서 나오면 그것조차 일어나지 않습니다. 그런 영상은 완전히 오프라인인 기계에서도 분석됩니다.</p>
+  </details>
+
+  <details>
+    <summary>Claude가 이미 YouTube 영상을 요약해 줍니다. 무엇이 빠져 있나요?</summary>
+    <p>화면입니다. 그 요약은 자막에서 나옵니다 — 말하는 사람만 나오는 인터뷰라면 충분하지만, 화면으로 가르치는 내용이라면 손실이 큽니다. 슬라이드, 코드, 도식, 풀어 나가는 수식이 전부 빠집니다. 이 도구는 같은 자막을 읽되 거기서 멈추지 않고, 사라진 시각 정보를 복원해 각 문장을 그 문장이 속한 화면에 붙입니다.</p>
+  </details>
+
+  <details>
+    <summary>Gemini는 영상을 그대로 받습니다. 이걸 왜 쓰나요?</summary>
+    <p>세 가지입니다. 첫째, 화면이 정적인 콘텐츠에 고정 간격 샘플링은 맞지 않습니다. 기본값 1fps면 한 시간 강의가 약 3,600장이고 거의 전부 중복이며, Google 문서조차 강의에는 비율을 직접 낮추라고 안내합니다. 이 도구는 화면 변화를 검출해 그 일을 자동으로 합니다. 둘째, 일회성 API 호출이 아니라 파일이 남습니다. context.md는 grep 하고, RAG용으로 색인하고, 커밋하고, 몇 번을 다시 읽어도 비용이 들지 않습니다. 셋째, 영상을 아예 받지 않는 모델에서도 동작하고, 영상을 업로드하지 않습니다.</p>
+  </details>
+
+  <details>
+    <summary>영상에 이미 자막이 있습니다. 그걸 쓰나요, 아니면 Whisper를 돌리나요?</summary>
+    <p>씁니다. 검사를 통과하는 한 영상 옆의 자막 파일이나 컨테이너 안의 텍스트 트랙이 Whisper보다 우선이고, --transcript FILE로 직접 지정할 수도 있습니다. 그 경우 Whisper는 아예 로드되지 않고, 그래서 그 경로는 [stt] extra도 네트워크도 필요 없습니다. 자동 생성 자막과 외국어 대사만 번역하는 forced 트랙은 거부되며, Whisper가 도는 건 그 경우입니다.</p>
+  </details>
+
+  <details>
+    <summary>ffmpeg를 설치해야 하나요?</summary>
+    <p>아니요. PyAV가 자체 디코더를 함께 배포합니다.</p>
+  </details>
+
+  <details>
+    <summary>설치 용량이 얼마나 되나요?</summary>
+    <p>macOS Apple Silicon 실측 기준 다운로드 108MB, 디스크 308MB입니다. whisper 백엔드도 torch도 없는 상태입니다. [stt]를 더하면 326MB / 1,180MB가 되고, 그중 476MB는 이 도구가 import조차 하지 않는 torch입니다. 상위 의존성이 조건 없이 선언해서 끌려 옵니다. Linux에서는 torch도 MLX도 관여하지 않아 extra 비용이 218MB가 아니라 약 70MB입니다. Whisper 모델 가중치는 처음 실행할 때 별도로 내려받습니다.</p>
+  </details>
+
+  <details>
+    <summary>분석 디렉터리는 디스크를 얼마나 쓰나요?</summary>
+    <p>영상보다 큽니다. 실측으로 원본의 1.9배에서 2.8배, 분당 약 4.48MB이므로 한 시간 강의가 대략 0.27GB입니다. analysis-video clean이 지우기 전에 회수 가능량을 먼저 보고하고, 한 실측 표본에서 --level images는 디렉터리를 9.8MB에서 1.4MB로 줄였습니다. reviews, transcript.json, context.md가 링크하는 읽기용 사본, frame --at으로 직접 지시한 프레임은 어느 수준에서도 지워지지 않습니다.</p>
+  </details>
+
+  <details>
+    <summary>MCP 서버가 있나요?</summary>
+    <p>없고, 의도적입니다. CLI가 이미 종료 코드 계약과 함께 구조화된 JSON을 돌려주므로, 그것을 감싼 MCP는 같은 내용을 1:1로 다시 말하면서 계속 띄워 둘 프로세스만 하나 늘리는 셈입니다. install-skill이 그 없이 같은 발견 가능성을 줍니다.</p>
+  </details>
+
+  <details>
+    <summary>어떤 영상 형식이 되나요?</summary>
+    <p>PyAV와 FFmpeg가 디코딩하는 것 전부입니다 — MP4, MOV, MKV, WebM 등.</p>
+  </details>
+
+  <details>
+    <summary>슬라이드가 아닌 영상에도 되나요?</summary>
+    <p>화면이 정적인 콘텐츠를 위해 만들었습니다. 강의, 스크린캐스트, 슬라이드 덱, 코딩 튜토리얼, 판서 녹화가 대상입니다. 계속 움직이는 영상은 화면 변화가 너무 많아 대상이 아닙니다.</p>
+  </details>
+</section>
+
+<section id="get">
+  <h2>받아 가기</h2>
+  <div class="cta">
+    <a class="btn btn-primary" href="https://github.com/hwanyong/analysis-video"
+       data-umami-event="github" data-umami-event-place="closing"
+       target="_blank" rel="noopener">GitHub에서 소스 보기&nbsp;→</a>
+    <a class="btn" href="https://pypi.org/project/analysis-video/"
+       data-umami-event="pypi" data-umami-event-place="closing"
+       target="_blank" rel="noopener">PyPI에서 설치하기&nbsp;→</a>
+  </div>
+  <p class="sub">MIT 라이선스. macOS · Linux · Windows x64에서 Python 3.11–3.14.</p>
+</section>
