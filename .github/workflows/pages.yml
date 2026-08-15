@@ -49,13 +49,12 @@ jobs:
       - name: build
         run: python site/build.py
 
-      # enablement: true 는 저장소에 Pages 가 아직 켜져 있지 않을 때 켜 준다.
-      # 이게 없으면 첫 실행이 deploy 단계에서 "Get Pages site failed" 로 죽는데,
-      # 그 메시지만 보고 원인이 설정이라는 걸 알기 어렵다.
-      - uses: actions/configure-pages@v6
-        with:
-          enablement: true
-
+      # actions/configure-pages 는 두지 않는다. 이 워크플로는 그 액션의 출력(base_path
+      # 등)을 쓰지 않고, 유일한 쓸모였을 enablement: true 는 **동작하지 않는다** —
+      # Pages 사이트 생성 API 는 저장소 관리자 권한을 요구하는데 워크플로의
+      # GITHUB_TOKEN 에는 permissions: 로도 그 권한을 줄 수 없다(실측: "Resource not
+      # accessible by integration"). Pages 는 저장소 설정에서 한 번 켜야 한다 —
+      # Settings → Pages → Source: GitHub Actions.
       - uses: actions/upload-pages-artifact@v5
         with:
           path: _site
