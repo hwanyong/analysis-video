@@ -31,7 +31,7 @@ from pathlib import Path
 SITE = Path(__file__).resolve().parent
 ROOT = SITE.parent
 
-ORIGIN = "https://hwanyong.github.io"
+ORIGIN = "https://blog.hwanyong.com"
 BASE = "/analysis-video"
 
 # germ-warfare 와 같은 websiteId 를 쓴다. Umami Cloud Hobby 플랜은 웹사이트가 1개뿐이고
@@ -39,7 +39,7 @@ BASE = "/analysis-video"
 # data-tag="analysis-video" 와 경로(/analysis-video/)뿐이다. Pro 로 올려 사이트를
 # 분리하게 되면 여기의 id 만 새 값으로 바꾸면 된다.
 UMAMI_WEBSITE_ID = "db077cf4-b237-47a9-84b1-d686da6e1291"
-UMAMI_DOMAIN = "hwanyong.github.io"
+UMAMI_DOMAIN = "blog.hwanyong.com"
 
 REPO = "https://github.com/hwanyong/analysis-video"
 PYPI = "https://pypi.org/project/analysis-video/"
@@ -309,7 +309,7 @@ def build(out: Path, base: str, origin: str) -> int:
 
     # robots.txt 는 만들지 않는다. 크롤러는 **도메인 루트**의 robots.txt 만 읽으므로
     # /analysis-video/robots.txt 는 아무도 가져가지 않는 죽은 파일이 된다. 사이트맵은
-    # Search Console 에 직접 제출하거나, hwanyong.github.io 루트의 robots.txt 에
+    # Search Console 에 직접 제출하거나, blog.hwanyong.com 루트의 robots.txt 에
     # `Sitemap:` 줄을 한 줄 더해서 알린다.
     (out / "sitemap.xml").write_text(sitemap(urls, lastmod), "utf-8")
 
