@@ -52,8 +52,8 @@
   <div class="wrap">
     <a class="brand" href="{{canonical}}">analysis-video</a>
     <nav aria-label="{{nav_label}}">
-      <a href="https://github.com/hwanyong/analysis-video" data-umami-event="github" data-umami-event-place="nav" target="_blank" rel="noopener">GitHub</a>
-      <a href="https://pypi.org/project/analysis-video/" data-umami-event="pypi" data-umami-event-place="nav" target="_blank" rel="noopener">PyPI</a>
+      <a href="https://github.com/hwanyong/analysis-video" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://pypi.org/project/analysis-video/" target="_blank" rel="noopener">PyPI</a>
       <a class="lang" href="{{alt_href}}" hreflang="{{alt_lang}}" lang="{{alt_lang}}">{{alt_label}}</a>
     </nav>
   </div>
@@ -66,9 +66,9 @@
 <footer>
   <div class="wrap">
     <div class="links">
-      <a href="https://github.com/hwanyong/analysis-video" data-umami-event="github" data-umami-event-place="footer" target="_blank" rel="noopener">GitHub</a>
-      <a href="https://pypi.org/project/analysis-video/" data-umami-event="pypi" data-umami-event-place="footer" target="_blank" rel="noopener">PyPI — analysis-video</a>
-      <a href="https://pypi.org/project/analysis-video-gui/" data-umami-event="pypi" data-umami-event-place="footer-gui" target="_blank" rel="noopener">PyPI — analysis-video-gui</a>
+      <a href="https://github.com/hwanyong/analysis-video" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://pypi.org/project/analysis-video/" target="_blank" rel="noopener">PyPI — analysis-video</a>
+      <a href="https://pypi.org/project/analysis-video-gui/" target="_blank" rel="noopener">PyPI — analysis-video-gui</a>
       <a href="https://github.com/hwanyong/analysis-video/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a>
     </div>
     <p>{{footer_note}}</p>
@@ -94,20 +94,10 @@ document.querySelectorAll('.copy').forEach(function (btn) {
 });
 </script>
 
-<!-- Umami Cloud — 이 페이지의 유일한 외부 요청.
-     integrity 미적용: script.js 는 버전 고정 URL 이 아니라 Umami 가 서버측에서 계속
-     갱신하는 엔드포인트다. 해시를 박으면 다음 갱신에서 무음으로 차단돼 계측이 영구
-     정지한다 — 그 편이 더 위험하다.
-     data-tag: germ-warfare 와 websiteId 를 공유하므로(Hobby 플랜은 사이트 1개),
-     이 태그가 두 사이트의 이벤트를 대시보드에서 갈라 주는 유일한 축이다.
-     data-domains: 이 호스트가 아니면 트래커가 아무것도 보내지 않는다. 없으면 로컬
-     미리보기(localhost)와 포크된 저장소의 Pages 배포까지 같은 통계로 들어와,
-     공유 중인 데이터가 조용히 오염된다. -->
-<script defer crossorigin="anonymous"
-        src="https://cloud.umami.is/script.js"
-        data-website-id="{{umami_website_id}}"
-        data-domains="{{umami_domains}}"
-        data-tag="analysis-video"></script>
+<!-- Cloudflare Web Analytics — 이 페이지의 유일한 외부 요청.
+     태그 전문과 프로덕션 게이트는 site/build.py 의 CF_BEACON 에 있다.
+     프로덕션 빌드가 아니면 이 자리는 빈 문자열이 된다. -->
+{{analytics}}
 
 </body>
 </html>
