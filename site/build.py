@@ -31,15 +31,21 @@ from pathlib import Path
 SITE = Path(__file__).resolve().parent
 ROOT = SITE.parent
 
-ORIGIN = "https://hwanyong.github.io"
+ORIGIN = "https://blog.hwanyong.com"
 BASE = "/analysis-video"
 
-# germ-warfare 와 같은 websiteId 를 쓴다. Umami Cloud Hobby 플랜은 웹사이트가 1개뿐이고
-# 그 자리는 이미 germ-warfare 가 차지하고 있다. 두 사이트를 가르는 축은 템플릿의
-# data-tag="analysis-video" 와 경로(/analysis-video/)뿐이다. Pro 로 올려 사이트를
-# 분리하게 되면 여기의 id 만 새 값으로 바꾸면 된다.
-UMAMI_WEBSITE_ID = "db077cf4-b237-47a9-84b1-d686da6e1291"
-UMAMI_DOMAIN = "hwanyong.github.io"
+# Cloudflare Web Analytics. blog.hwanyong.com 전체가 이 토큰 하나로 잡힌다 —
+# 호스트 단위 집계라 하위 경로인 이 랜딩도 같은 사이트의 페이지로 들어간다.
+# token 은 비밀이 아니다: 모든 방문자의 HTML 에 그대로 실려 나가는 공개 식별자다.
+CF_BEACON_TOKEN = "d10ef3756f0a47f48b7896721f153bfa"
+
+# integrity 미적용: beacon.min.js 는 버전 고정 URL 이 아니라 Cloudflare 가 계속
+# 갱신하는 엔드포인트다. 해시를 박으면 다음 갱신에서 무음으로 차단돼 계측이 영구
+# 정지한다 — 그 편이 더 위험하다.
+CF_BEACON = (
+    '<script type="module" src="https://static.cloudflareinsights.com/beacon.min.js"'
+    f" data-cf-beacon='{{\"token\": \"{CF_BEACON_TOKEN}\"}}'></script>"
+)
 
 REPO = "https://github.com/hwanyong/analysis-video"
 PYPI = "https://pypi.org/project/analysis-video/"
@@ -286,11 +292,12 @@ def build(out: Path, base: str, origin: str) -> int:
             "origin": f"{origin}{base}".rstrip("/"),
             "base": base,
             "style": style,
-            "umami_website_id": UMAMI_WEBSITE_ID,
-            # 전송을 허용할 호스트는 **언제나 프로덕션 하나**다. --origin 을 따라가게
-            # 두면 로컬 미리보기가 스스로를 허용해 통계를 오염시킨다. 여기를 고정하면
-            # 미리보기·포크 배포는 어떤 값으로 빌드하든 아무것도 보내지 않는다.
-            "umami_domains": UMAMI_DOMAIN,
+            # 계측은 **프로덕션 빌드에만** 싣는다. Umami 시절에는 data-domains 가
+            # 호스트를 검사해 이 일을 클라이언트에서 했지만, Cloudflare 비콘에는
+            # 그런 속성이 없다 — 실리면 어디서 열리든 보낸다. 그래서 게이트를
+            # 빌드로 옮긴다: --origin 이 프로덕션이 아니면 태그 자체가 안 나간다.
+            # 로컬 미리보기와 포크된 저장소의 Pages 배포가 통계를 오염시키지 못한다.
+            "analytics": CF_BEACON if origin == ORIGIN else "",
             "jsonld": jsonld(lang, urls[lang], f"{origin}{base}".rstrip("/"),
                              parser.pairs, version),
             "body": body.replace("{{base}}", base),
@@ -309,7 +316,7 @@ def build(out: Path, base: str, origin: str) -> int:
 
     # robots.txt 는 만들지 않는다. 크롤러는 **도메인 루트**의 robots.txt 만 읽으므로
     # /analysis-video/robots.txt 는 아무도 가져가지 않는 죽은 파일이 된다. 사이트맵은
-    # Search Console 에 직접 제출하거나, hwanyong.github.io 루트의 robots.txt 에
+    # Search Console 에 직접 제출하거나, blog.hwanyong.com 루트의 robots.txt 에
     # `Sitemap:` 줄을 한 줄 더해서 알린다.
     (out / "sitemap.xml").write_text(sitemap(urls, lastmod), "utf-8")
 

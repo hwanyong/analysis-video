@@ -7,7 +7,7 @@
 [![Python 3.11–3.14](https://img.shields.io/badge/python-3.11%E2%80%933.14-blue)](#platform-support)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-**[Website](https://hwanyong.github.io/analysis-video/?utm_source=github&utm_medium=readme)** ·
+**[Website](https://blog.hwanyong.com/analysis-video/?utm_source=github&utm_medium=readme)** ·
 [한국어 README](README.ko.md)
 
 ![One section of context.md beside the two frames it points to](docs/media/context-example.png)

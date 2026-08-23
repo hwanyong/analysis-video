@@ -8,7 +8,7 @@
 [![Python 3.11–3.14](https://img.shields.io/badge/python-3.11%E2%80%933.14-blue)](#지원-환경)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-**[웹사이트](https://hwanyong.github.io/analysis-video/ko/?utm_source=github&utm_medium=readme)** ·
+**[웹사이트](https://blog.hwanyong.com/analysis-video/ko/?utm_source=github&utm_medium=readme)** ·
 [English README](README.md)
 
 ![context.md 한 항목과 그것이 가리키는 두 프레임](docs/media/context-example.png)

@@ -1,6 +1,6 @@
 name: pages
 
-# 랜딩 페이지를 https://hwanyong.github.io/analysis-video/ 로 배포한다.
+# 랜딩 페이지를 https://blog.hwanyong.com/analysis-video/ 로 배포한다.
 #
 # 경로는 저장소 이름에서 자동으로 파생된다 — hwanyong.github.io 저장소는 건드리지 않는다.
 # 사용자 페이지(hwanyong.github.io)와 프로젝트 페이지(이 저장소)는 서로 다른 배포이고,
