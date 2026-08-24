@@ -31,7 +31,7 @@ from pathlib import Path
 SITE = Path(__file__).resolve().parent
 ROOT = SITE.parent
 
-ORIGIN = "https://blog.hwanyong.com"
+ORIGIN = "https://lab.hwanyong.com"
 BASE = "/analysis-video"
 
 # Cloudflare Web Analytics. blog.hwanyong.com 전체가 이 토큰 하나로 잡힌다 —
