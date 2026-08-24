@@ -58,6 +58,11 @@ jobs:
       - uses: actions/upload-pages-artifact@v5
         with:
           path: _site
+      # Cloudflare 잡이 같은 산출물을 쓴다 — 빌드를 두 번 하지 않기 위해 함께 올린다.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: site
+          path: _site
 
   deploy:
     needs: build
@@ -68,3 +73,25 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v5
+
+  # ── Cloudflare Workers (lab.hwanyong.com) ────────────────────────────────
+  # ★ 선행 조건: 저장소 시크릿 CLOUDFLARE_API_TOKEN · CLOUDFLARE_ACCOUNT_ID.
+  #   없으면 이 잡만 실패하고 GitHub Pages 배포는 영향받지 않는다.
+  cloudflare:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v4
+        with:
+          name: site
+          path: _site
+      - name: Arrange assets under the served path
+        run: |
+          mkdir -p out/analysis-video
+          cp -R _site/. out/analysis-video/
+          cp cloudflare/_headers out/_headers
+      - uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

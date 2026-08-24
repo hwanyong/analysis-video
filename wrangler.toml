@@ -1,0 +1,20 @@
+# wrangler.toml — Cloudflare Workers 정적 자산 배포.
+#
+# GitHub Pages 와 ★함께★ 나간다. 런칭 전까지 blog.hwanyong.com/analysis-video/ 가
+# 지금처럼 살아 있어야 하므로 .github/workflows/pages.yml 의 Pages 배포는 그대로 둔다.
+#
+# ★ 산출물(_site)을 out/analysis-video/ 로 한 겹 옮겨 담는다. Worker 의 정적 자산은
+#   루트 기준이라 그대로 올리면 /index.html 이 되어 /analysis-video/ 요청과 맞지 않는다.
+#   호스트가 blog → lab 으로 바뀌어도 ★경로는 그대로★ 이므로 build.py 의 ORIGIN 을
+#   비롯한 사이트 내부 주소는 런칭일에만 손댄다.
+name = "analysis-video"
+compatibility_date = "2026-08-23"
+
+[assets]
+directory = "./out"
+not_found_handling = "404-page"
+html_handling = "auto-trailing-slash"
+
+[[routes]]
+pattern = "lab.hwanyong.com/analysis-video/*"
+zone_name = "hwanyong.com"

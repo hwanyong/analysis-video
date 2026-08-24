@@ -20,3 +20,7 @@ _site/
 
 # 세션용 재현 스크립트 — 이 저장소에 없는 testdata/ 를 읽으므로 클론한 사람은 돌릴 수 없다.
 verify.sh
+
+# Cloudflare 배포용 임시 산출물
+out/
+.wrangler/
