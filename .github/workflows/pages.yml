@@ -1,14 +1,16 @@
-name: pages
+name: deploy
 
-# 랜딩 페이지를 https://blog.hwanyong.com/analysis-video/ 로 배포한다.
+# 랜딩 페이지를 https://lab.hwanyong.com/analysis-video/ 로 배포한다.
 #
-# 경로는 저장소 이름에서 자동으로 파생된다 — hwanyong.github.io 저장소는 건드리지 않는다.
-# 사용자 페이지(hwanyong.github.io)와 프로젝트 페이지(이 저장소)는 서로 다른 배포이고,
-# 같은 도메인을 경로로 나눠 쓸 뿐이다.
+# ★ 한때 GitHub Pages 로도 나갔다(blog.hwanyong.com/analysis-video/). 2026-08-25 에 그 잡을
+#   지웠다 — 그 도메인은 이제 Cloudflare 가 서빙하고, 옛 경로는 Worker 가 lab 으로
+#   301 한다. Pages 로 올려 봐야 아무도 읽지 않는 산출물이었다.
+#   저장소 설정의 Pages 도 같은 날 껐다.
+#
+# ★ 되돌릴 곳이 없다. 이 잡이 실패하면 사이트는 ★직전 배포에 머문다★ —
+#   내려가지는 않지만 새 내용이 나가지 않는다. 실패를 방치하면 조용히 낡는다.
 #
 # 액션 핀 규칙은 ci.yml 과 같다 — 공식 액션은 이동하는 메이저 태그로 핀한다.
-# Pages 액션들의 현재 메이저는 configure v6 / upload v5 / deploy v5 다. 오래된 안내
-# 문서가 아직 v3·v4 를 예시로 들고 있으니 복사해 오지 말 것.
 
 on:
   push:
@@ -21,17 +23,18 @@ on:
       - 'docs/media/**'
       - 'packages/core/pyproject.toml'
       - '.github/workflows/pages.yml'
+      - 'cloudflare/**'
   workflow_dispatch:
 
+# 저장소를 읽는 것뿐이다. Pages 잡을 지우면서 그 잡이 쓰던 쓰기 권한도 함께 걷었다 —
+# 쓰지 않는 쓰기 권한을 남겨 두면 워크플로를 뺏겼을 때 넘겨줄 것이 그만큼 늘어난다.
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 # 배포는 취소하지 않는다. 밀어내기가 연달아 들어와도 진행 중인 배포를 끊으면
-# Pages 가 중간 상태로 남을 수 있다 — 뒤엣것이 큐에서 기다리는 편이 낫다.
+# 중간 상태로 남을 수 있다 — 뒤엣것이 큐에서 기다리는 편이 낫다.
 concurrency:
-  group: pages
+  group: deploy
   cancel-in-progress: false
 
 jobs:
@@ -49,34 +52,17 @@ jobs:
       - name: build
         run: python site/build.py
 
-      # actions/configure-pages 는 두지 않는다. 이 워크플로는 그 액션의 출력(base_path
-      # 등)을 쓰지 않고, 유일한 쓸모였을 enablement: true 는 **동작하지 않는다** —
-      # Pages 사이트 생성 API 는 저장소 관리자 권한을 요구하는데 워크플로의
-      # GITHUB_TOKEN 에는 permissions: 로도 그 권한을 줄 수 없다(실측: "Resource not
-      # accessible by integration"). Pages 는 저장소 설정에서 한 번 켜야 한다 —
-      # Settings → Pages → Source: GitHub Actions.
-      - uses: actions/upload-pages-artifact@v5
-        with:
-          path: _site
-      # Cloudflare 잡이 같은 산출물을 쓴다 — 빌드를 두 번 하지 않기 위해 함께 올린다.
+      # ★ 한때 Pages 전용 업로드 액션이 여기 하나 더 있었다. 그것이 만드는 것은
+      #   ★GitHub Pages 전용 형식★ 이라 Cloudflare 잡이 그대로 내려받을 수 없어
+      #   일반 아티팩트를 한 벌 더 올려야 했다. Pages 를 버린 뒤로는 이 한 벌뿐이다.
       - uses: actions/upload-artifact@v4
         with:
           name: site
           path: _site
 
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@v5
-
   # ── Cloudflare Workers (lab.hwanyong.com) ────────────────────────────────
+  # ★이 잡이 유일한 배포다.★
   # ★ 선행 조건: 저장소 시크릿 CLOUDFLARE_API_TOKEN · CLOUDFLARE_ACCOUNT_ID.
-  #   없으면 이 잡만 실패하고 GitHub Pages 배포는 영향받지 않는다.
   cloudflare:
     needs: build
     runs-on: ubuntu-latest
