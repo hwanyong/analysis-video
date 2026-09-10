@@ -275,13 +275,17 @@ jobs:
             exit 1
           fi
 
-      # 90일 뒤 만료되고 로그인해야 받을 수 있다 — 배포물의 영구 사본은
-      # 아래 github-release 잡이 만드는 GitHub 릴리스 쪽이다. 여기 올리는 것은
-      # publish 잡에 넘기기 위한 잡 사이 전달용이다.
+      # 잡 사이 전달용이다. publish 잡과 github-release 잡이 같은 실행 안에서
+      # 내려받으므로 하루면 충분하다. 배포물의 영구 사본은 아래 github-release 잡이
+      # 만드는 GitHub 릴리스 쪽이다.
+      # ★ retention-days 를 지우지 않는다. 기본값 90일로 두면 실행마다 남아 계정의
+      #   Actions storage 를 쓴다(2026-09-10 에 hwanyong.github.io 가 그렇게 무료
+      #   한도를 다 썼다).
       - uses: actions/upload-artifact@v7
         with:
           name: dist-release
           path: dist-release/
+          retention-days: 1
 
   publish:
     name: PyPI 업로드 · ${{ needs.target.outputs.dist }}
